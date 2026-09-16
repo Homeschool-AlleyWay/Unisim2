@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Pixel School Simulator</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0;
+    background: #f8ede3;
+    font-family: system-ui, -apple-system, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    overflow: hidden;
+    color: #1e293b;
+  }
+  .header {
+    text-align: center;
+    margin-bottom: 20px;
+  }
+  .header h1 { margin: 0 0 5px 0; font-size: 2rem; font-weight: 900; }
+  .header p { margin: 0; font-weight: bold; color: #64748b; }
+  
+  #game-container {
+    position: relative;
+    width: 100%;
+    max-width: 800px;
+    background: #a7f3d0;
+    border: 8px solid white;
+    border-radius: 24px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+    overflow: hidden;
+  }
+  
+  /* Maintain 4:3 aspect ratio */
+  #game-container::before {
+    content: "";
+    display: block;
+    padding-top: 75%; /* 3:4 */
+  }
+  
+  canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    display: block;
+    image-rendering: pixelated;
+    background: #4ade80;
+  }
+  
+  #ui-top {
+    position: absolute;
+    top: 16px; left: 16px; right: 16px;
+    display: flex;
+    justify-content: space-between;
+    pointer-events: none;
+    z-index: 10;
+  }
+  
+  .hud-box {
+    background: rgba(255,255,255,0.9);
+    backdrop-filter: blur(4px);
+    padding: 12px;
+    border-radius: 12px;
+    border: 2px solid #e2e8f0;
+    pointer-events: auto;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+  }
+  
+  #clock { font-size: 24px; font-weight: 900; line-height: 1; margin-bottom: 4px; }
+  #period { font-size: 12px; font-weight: 800; color: #0ea5e9; text-transform: uppercase; letter-spacing: 1px; }
+  
+  .btn-group { display: flex; gap: 8px; pointer-events: auto; }
+  button {
+    background: white;
+    border: 2px solid #e2e8f0;
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    display: flex; align-items: center; justify-content: center;
+  }
+  button:hover { background: #f8fafc; }
+  button.active { border-color: #0ea5e9; color: #0ea5e9; }
+  button svg { width: 20px; height: 20px; fill: currentColor; }
+  
+  #joystick-base {
+    position: absolute;
+    bottom: 24px; left: 24px;
+    width: 120px; height: 120px;
+    background: rgba(30,41,59,0.3);
+    border: 2px solid rgba(255,255,255,0.5);
+    border-radius: 50%;
+    touch-action: none;
+    pointer-events: auto;
+    z-index: 20;
+    display: none;
+  }
+  @media (max-width: 768px) {
+    #joystick-base { display: block; }
+    .header { display: none; }
+    #game-container { border-radius: 0; border: none; height: 100vh; max-width: none; }
+    #game-container::before { padding-top: 0; }
+  }
+  
+  #joystick-stick {
+    position: absolute;
+    width: 48px; height: 48px;
+    background: white;
+    border-radius: 50%;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+    border: 2px solid #e2e8f0;
+    pointer-events: none;
+  }
+  
+  #instructions {
+    position: absolute;
+    bottom: 24px; right: 24px;
+    background: rgba(255,255,255,0.95);
+    padding: 16px;
+    border-radius: 12px;
+    border: 2px solid #e2e8f0;
+    font-size: 14px;
+    pointer-events: none;
+    max-width: 240px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    z-index: 10;
+  }
+  @media (max-width: 768px) { #instructions { display: none; } }
+  .key { background: #f1f5f9; border: 1px solid #cbd5e1; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Pixel School</h1>
+  <p>A lively miniature simulator. Watch them learn!</p>
+</div>
+
+<div id="game-container">
+  <div id="ui-top">
+    <div class="hud-box">
+      <div id="clock">8:00 AM</div>
+      <div id="period">Arrival</div>
+    </div>
+    <div class="btn-group">
+      <button id="btn-pause" title="Play/Pause">
+        <svg id="icon-pause" viewBox="0 0 24 24"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>
+        <svg id="icon-play" style="display:none;" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      </button>
+      <button id="btn-speed" title="Fast Forward">
+        <svg viewBox="0 0 24 24"><path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/></svg>
+      </button>
+    </div>
+  </div>
+  
+  <canvas id="game-canvas" width="512" height="384"></canvas>
+  
+  <div id="joystick-base">
+    <div id="joystick-stick"></div>
+  </div>
+  
+  <div id="instructions">
+    <div style="font-size: 10px; font-weight: bold; color: #94a3b8; text-transform: uppercase; margin-bottom: 8px;">How to play</div>
+    <div style="font-weight: 600; line-height: 1.4; margin-bottom: 8px;">Use <span class="key">W</span> <span class="key">A</span> <span class="key">S</span> <span class="key">D</span> to move. You control the student with the yellow arrow.</div>
+    <div style="font-size: 12px; font-weight: bold; color: #0ea5e9;">Watch the other students rush to class as the period changes!</div>
+  </div>
+</div>
+
+<script>
+// --- Constants & Config ---
+const TILE_SIZE = 16;
+const MAP_WIDTH = 32;
+const MAP_HEIGHT = 24;
+
+const mapRows = [
+  "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+  "WMMMMMMMMMWWAAAAAAAAAAWW       W",
+  "WMMMMMMMMMWWAAAAAAAAAAWW       W",
+  "WMMMMMMMMMWWAAAAAAAAAAWW       W",
+  "WMMMMMMMMMWWAAAAAAAAAAWW       W",
+  "WMMMMMMMMMWWAAAAAAAAAAWW       W",
+  "WMMMMMMMMMWWAAAAAAAAAAWW       W",
+  "WMMMMMMMMMWWAAAAAAAAAAWW       W",
+  "WWWWWdWWWWWWWWWWWdWWWWWWWWWWWWWW",
+  "WHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHW",
+  "WHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHW",
+  "WHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHW",
+  "WHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHW",
+  "WWWWWdWWWWWWWWWWWWWWdWWWWWWWWWWW",
+  "WEEEEEEEEEWWCCCCCCCCCCCCCCCCCCCW",
+  "WEEEEEEEEEWWCCCCCCCCCCCCCCCCCCCW",
+  "WEEEEEEEEEWWCCCCCCCCCCCCCCCCCCCW",
+  "WEEEEEEEEEWWCCCCCCCCCCCCCCCCCCCW",
+  "WEEEEEEEEEWWCCCCCCCCCCCCCCCCCCCW",
+  "WEEEEEEEEEWWCCCCCCCCCCCCCCCCCCCW",
+  "WEEEEEEEEEWWCCCCCCCCCCCCCCCCCCCW",
+  "WEEEEEEEEEWWCCCCCCCCCCCCCCCCCCCW",
+  "WWWWWdWWWWWWWWWWWWWWWWWWWWWWWWWW",
+  "     d                          "
+];
+
+const floorColors = {
+  W: '#cbd5e1', M: '#fef08a', A: '#fbcfe8', H: '#f8fafc',
+  C: '#bfdbfe', E: '#fed7aa', d: '#f8fafc', ' ': 'transparent'
+};
+
+const mathDeskCoords = [[3,3], [5,3], [7,3], [9,3], [3,5], [5,5], [7,5], [9,5], [5,7], [7,7]];
+const artDeskCoords = [[15,3], [17,3], [19,3], [21,3], [15,5], [17,5], [19,5], [21,5], [17,7], [19,7]];
+const cafCoords = [[16,16], [17,16], [18,16], [19,16], [16,18], [17,18], [18,18], [19,18], [16,20], [17,20]];
+
+// Generate Map Objects
+const objects = [];
+for (let y = 0; y < MAP_HEIGHT; y++) {
+  for (let x = 0; x < MAP_WIDTH; x++) {
+    if (mapRows[y][x] === 'W') {
+      objects.push({ type: 'wall', rect: {x: x*TILE_SIZE, y: y*TILE_SIZE, w: TILE_SIZE, h: TILE_SIZE}, solid: true, zIndex: y*TILE_SIZE + TILE_SIZE });
+    }
+  }
+}
+mathDeskCoords.forEach(([x, y]) => objects.push({ type: 'desk', color: '#d97706', rect: {x: x*TILE_SIZE, y: y*TILE_SIZE, w: TILE_SIZE, h: TILE_SIZE}, solid: true, zIndex: y*TILE_SIZE + TILE_SIZE }));
+artDeskCoords.forEach(([x, y]) => objects.push({ type: 'desk', color: '#fb923c', rect: {x: x*TILE_SIZE, y: y*TILE_SIZE, w: TILE_SIZE, h: TILE_SIZE}, solid: true, zIndex: y*TILE_SIZE + TILE_SIZE }));
+cafCoords.forEach(([x, y]) => objects.push({ type: 'table', rect: {x: x*TILE_SIZE, y: y*TILE_SIZE, w: TILE_SIZE, h: TILE_SIZE}, solid: true, zIndex: y*TILE_SIZE + TILE_SIZE }));
+
+// Build Collision Grid
+const collisionGrid = Array.from({ length: MAP_HEIGHT }, () => Array(MAP_WIDTH).fill(false));
+for (const obj of objects) {
+  if (obj.solid) {
+    const startX = Math.floor(obj.rect.x / TILE_SIZE);
+    const startY = Math.floor(obj.rect.y / TILE_SIZE);
+    const endX = Math.floor((obj.rect.x + obj.rect.w - 1) / TILE_SIZE);
+    const endY = Math.floor((obj.rect.y + obj.rect.h - 1) / TILE_SIZE);
+    for (let y = startY; y <= endY; y++) {
+      for (let x = startX; x <= endX; x++) {
+        if (y >= 0 && y < MAP_HEIGHT && x >= 0 && x < MAP_WIDTH) collisionGrid[y][x] = true;
+      }
+    }
+  }
+}
+
+// A* Pathfinding
+function findPath(start, goal) {
+  if (goal.y < 0 || goal.y >= MAP_HEIGHT || goal.x < 0 || goal.x >= MAP_WIDTH) return [];
+  const openSet = [{ x: start.x, y: start.y, g: 0, h: 0, f: 0, parent: null }];
+  const closedSet = Array.from({length: MAP_HEIGHT}, () => Array(MAP_WIDTH).fill(false));
+  const dirs = [[0, -1], [1, 0], [0, 1], [-1, 0]]; 
+  
+  while(openSet.length > 0) {
+    openSet.sort((a,b) => a.f - b.f);
+    const current = openSet.shift();
+    if (current.x === goal.x && current.y === goal.y) {
+      const path = [];
+      let curr = current;
+      while(curr) { path.push({ x: curr.x, y: curr.y }); curr = curr.parent; }
+      return path.reverse();
+    }
+    closedSet[current.y][current.x] = true;
+    for (const [dx, dy] of dirs) {
+      const nx = current.x + dx;
+      const ny = current.y + dy;
+      if (nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT) {
+        if (closedSet[ny][nx]) continue;
+        if (collisionGrid[ny][nx] && !(nx === goal.x && ny === goal.y)) continue;
+        const g = current.g + 1;
+        const h = Math.abs(nx - goal.x) + Math.abs(ny - goal.y);
+        const existing = openSet.find(n => n.x === nx && n.y === ny);
+        if (existing) {
+          if (g < existing.g) { existing.g = g; existing.f = g + existing.h; existing.parent = current; }
+        } else {
+          openSet.push({ x: nx, y: ny, g, h, f: g + h, parent: current });
+        }
+      }
+    }
+  }
+  return []; 
+}
+
+// Init Entities
+const colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#eab308'];
+const skinColors = ['#fcd34d', '#fbcfe8', '#fdba74', '#d6d3d1', '#fcd34d', '#fbcfe8', '#fdba74', '#d6d3d1', '#fcd34d', '#fbcfe8'];
+const entities = Array.from({ length: 10 }).map((_, i) => {
+  const mDesk = mathDeskCoords[i];
+  const aDesk = artDeskCoords[i];
+  const cTable = cafCoords[i];
+  const schedule = {
+    'Arrival': { x: 2 + i * 2, y: 10 },
+    'Period 1': { x: mDesk[0], y: mDesk[1] + 1 },
+    'Lunch': { x: cTable[0], y: cTable[1] - 1 },
+    'Period 2': { x: aDesk[0], y: aDesk[1] + 1 },
+    'Dismissal': { x: 5, y: 23 }
+  };
+  return {
+    isPlayer: i === 0,
+    pos: { x: schedule['Arrival'].x * TILE_SIZE + 8, y: 23 * TILE_SIZE + 8 },
+    vel: { x: 0, y: 0 },
+    path: [],
+    color: i === 0 ? '#ef4444' : colors[i],
+    hairColor: '#451a03',
+    skinColor: skinColors[i],
+    speed: i === 0 ? 65 : 40 + Math.random() * 15,
+    frame: 0,
+    schedule
+  };
+});
+
+// Game State
+let timeMinutes = 8 * 60; // 8:00 AM
+let period = 'Arrival';
+let timeSpeed = 1;
+let isPaused = false;
+
+function assignAIPaths() {
+  entities.forEach(ent => {
+    if (ent.isPlayer) return;
+    const targetTile = ent.schedule[period];
+    const startTile = { x: Math.floor(ent.pos.x / TILE_SIZE), y: Math.floor(ent.pos.y / TILE_SIZE) };
+    ent.path = findPath(startTile, targetTile);
+  });
+}
+assignAIPaths();
+
+// Input Handling
+const keys = new Set();
+window.addEventListener('keydown', e => keys.add(e.key.toLowerCase()));
+window.addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+
+let joystickInput = { x: 0, y: 0 };
+const base = document.getElementById('joystick-base');
+const stick = document.getElementById('joystick-stick');
+let activeTouchId = null;
+
+function updateJoystick(e) {
+  const rect = base.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  let dx = e.clientX - cx;
+  let dy = e.clientY - cy;
+  const max = rect.width / 2;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+  if (dist > max) { dx = (dx/dist) * max; dy = (dy/dist) * max; }
+  stick.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+  joystickInput = { x: dx / max, y: dy / max };
+}
+
+base.addEventListener('pointerdown', e => {
+  activeTouchId = e.pointerId;
+  base.setPointerCapture(activeTouchId);
+  updateJoystick(e);
+});
+base.addEventListener('pointermove', e => {
+  if (activeTouchId === e.pointerId) updateJoystick(e);
+});
+const releaseJoystick = e => {
+  if (activeTouchId === e.pointerId) {
+    activeTouchId = null;
+    stick.style.transform = `translate(-50%, -50%)`;
+    joystickInput = { x: 0, y: 0 };
+    base.releasePointerCapture(e.pointerId);
+  }
+};
+base.addEventListener('pointerup', releaseJoystick);
+base.addEventListener('pointercancel', releaseJoystick);
+
+// UI Controls
+const clockEl = document.getElementById('clock');
+const periodEl = document.getElementById('period');
+const btnPause = document.getElementById('btn-pause');
+const btnSpeed = document.getElementById('btn-speed');
+const iconPause = document.getElementById('icon-pause');
+const iconPlay = document.getElementById('icon-play');
+
+btnPause.addEventListener('click', () => {
+  isPaused = !isPaused;
+  iconPause.style.display = isPaused ? 'none' : 'block';
+  iconPlay.style.display = isPaused ? 'block' : 'none';
+});
+btnSpeed.addEventListener('click', () => {
+  timeSpeed = timeSpeed === 1 ? 4 : 1;
+  btnSpeed.classList.toggle('active', timeSpeed > 1);
+});
+
+// Update & Render Loop
+const canvas = document.getElementById('game-canvas');
+const ctx = canvas.getContext('2d');
+let lastTime = performance.now();
+
+function update(dt) {
+  // Update Time (1 real sec = 1 in-game min at 1x speed)
+  timeMinutes += dt * timeSpeed;
+  
+  let newPeriod = period;
+  if (timeMinutes >= 12.5 * 60) newPeriod = 'Dismissal';
+  else if (timeMinutes >= 11 * 60) newPeriod = 'Period 2';
+  else if (timeMinutes >= 10 * 60) newPeriod = 'Lunch';
+  else if (timeMinutes >= 8.5 * 60) newPeriod = 'Period 1';
+  
+  if (newPeriod !== period) {
+    period = newPeriod;
+    assignAIPaths();
+  }
+  if (timeMinutes > 13 * 60) {
+    timeMinutes = 8 * 60;
+    period = 'Arrival';
+    assignAIPaths();
+  }
+  
+  // UI Sync
+  const h = Math.floor(timeMinutes / 60);
+  const m = Math.floor(timeMinutes % 60);
+  const isPM = h >= 12;
+  const displayH = h > 12 ? h - 12 : h;
+  clockEl.innerText = `${displayH}:${m.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
+  periodEl.innerText = period;
+
+  // Player Input
+  const player = entities.find(e => e.isPlayer);
+  let ix = joystickInput.x;
+  let iy = joystickInput.y;
+  if (keys.has('w') || keys.has('arrowup')) iy = -1;
+  if (keys.has('s') || keys.has('arrowdown')) iy = 1;
+  if (keys.has('a') || keys.has('arrowleft')) ix = -1;
+  if (keys.has('d') || keys.has('arrowright')) ix = 1;
+  
+  if (ix !== 0 && iy !== 0) { const len = Math.sqrt(ix*ix + iy*iy); ix /= len; iy /= len; }
+  player.vel.x = ix * player.speed;
+  player.vel.y = iy * player.speed;
+
+  // Entity Updates
+  entities.forEach(ent => {
+    if (ent.isPlayer) {
+      moveEntity(ent, dt);
+    } else {
+      if (ent.path.length > 0) {
+        const target = { x: ent.path[0].x * TILE_SIZE + 8, y: ent.path[0].y * TILE_SIZE + 8 };
+        const dx = target.x - ent.pos.x;
+        const dy = target.y - ent.pos.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < 2) {
+          ent.path.shift();
+          ent.vel.x = 0; ent.vel.y = 0;
+        } else {
+          ent.vel.x = (dx / dist) * ent.speed * timeSpeed;
+          ent.vel.y = (dy / dist) * ent.speed * timeSpeed;
+        }
+        moveEntity(ent, dt);
+      } else {
+        ent.vel.x = 0; ent.vel.y = 0;
+      }
+    }
+    
+    if (ent.vel.x !== 0 || ent.vel.y !== 0) ent.frame += dt * 10 * timeSpeed;
+    else ent.frame = 0;
+  });
+}
+
+function moveEntity(ent, dt) {
+  const nx = ent.pos.x + ent.vel.x * dt;
+  const ny = ent.pos.y + ent.vel.y * dt;
+  const w = 10, h = 6; // collision box bottom center
+  
+  if (!checkCollision({x: nx - w/2, y: ent.pos.y - h, w, h})) ent.pos.x = nx;
+  if (!checkCollision({x: ent.pos.x - w/2, y: ny - h, w, h})) ent.pos.y = ny;
+  
+  ent.pos.x = Math.max(w/2, Math.min(MAP_WIDTH * TILE_SIZE - w/2, ent.pos.x));
+  ent.pos.y = Math.max(h, Math.min(MAP_HEIGHT * TILE_SIZE - 2, ent.pos.y));
+}
+
+function checkCollision(r1) {
+  return objects.some(obj => obj.solid && !(obj.rect.x >= r1.x + r1.w || obj.rect.x + obj.rect.w <= r1.x || obj.rect.y >= r1.y + r1.h || obj.rect.y + obj.rect.h <= r1.y));
+}
+
+function render() {
+  ctx.fillStyle = '#4ade80';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+  // Floor
+  for (let y = 0; y < MAP_HEIGHT; y++) {
+    for (let x = 0; x < MAP_WIDTH; x++) {
+      const c = mapRows[y][x];
+      ctx.fillStyle = (c === 'H' || c === 'd') ? ((x + y) % 2 === 0 ? '#f8fafc' : '#f1f5f9') : floorColors[c];
+      if (ctx.fillStyle !== 'rgba(0, 0, 0, 0)' && ctx.fillStyle !== 'transparent') {
+        ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+      }
+    }
+  }
+
+  // Y-Sort
+  const renderables = [
+    ...objects.map(o => ({ type: 'obj', y: o.zIndex, item: o })),
+    ...entities.map(e => ({ type: 'ent', y: e.pos.y, item: e }))
+  ].sort((a, b) => a.y - b.y);
+
+  renderables.forEach(r => {
+    if (r.type === 'obj') {
+      const obj = r.item;
+      const { x, y, w, h } = obj.rect;
+      if (obj.type === 'wall') {
+        ctx.fillStyle = '#64748b'; ctx.fillRect(x, y, w, h);
+        ctx.fillStyle = '#94a3b8'; ctx.fillRect(x, y - 4, w, 4);
+        ctx.fillStyle = '#475569'; ctx.fillRect(x, y + h - 2, w, 2);
+      } else if (obj.type === 'desk') {
+        ctx.fillStyle = obj.color; ctx.fillRect(x + 1, y + 2, w - 2, h - 6);
+        ctx.fillStyle = '#475569'; ctx.fillRect(x + 2, y + h - 4, 2, 4); ctx.fillRect(x + w - 4, y + h - 4, 2, 4);
+      } else if (obj.type === 'table') {
+        ctx.fillStyle = '#e2e8f0'; ctx.fillRect(x, y + 2, w, h - 4);
+        ctx.fillStyle = '#cbd5e1'; ctx.fillRect(x, y + h - 2, w, 2);
+      }
+    } else {
+      const ent = r.item;
+      const { x, y } = ent.pos;
+      const isWalk = ent.vel.x !== 0 || ent.vel.y !== 0;
+      const bob = isWalk ? Math.abs(Math.sin(ent.frame * 0.2)) * 2 : 0;
+      
+      // Shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.2)';
+      ctx.beginPath(); ctx.ellipse(x, y, 6, 3, 0, 0, Math.PI * 2); ctx.fill();
+      
+      // Legs
+      ctx.fillStyle = '#1e293b'; 
+      if (isWalk) {
+        const lo = Math.sin(ent.frame * 0.3) * 3;
+        ctx.fillRect(x - 4, y - 4 - bob, 3, 4 + lo); ctx.fillRect(x + 1, y - 4 - bob, 3, 4 - lo);
+      } else {
+        ctx.fillRect(x - 4, y - 4, 3, 4); ctx.fillRect(x + 1, y - 4, 3, 4);
+      }
+      
+      // Player Arrow
+      if (ent.isPlayer) {
+        ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 2; ctx.strokeRect(x - 7, y - 24 - bob, 14, 22);
+        ctx.fillStyle = '#fbbf24'; ctx.beginPath(); ctx.moveTo(x, y - 30 - bob); ctx.lineTo(x - 4, y - 36 - bob); ctx.lineTo(x + 4, y - 36 - bob); ctx.fill();
+      }
+      
+      // Body & Head
+      ctx.fillStyle = ent.color; ctx.fillRect(x - 5, y - 12 - bob, 10, 8);
+      ctx.fillStyle = ent.skinColor; ctx.fillRect(x - 4, y - 20 - bob, 8, 8);
+      
+      // Hair
+      ctx.fillStyle = ent.hairColor; ctx.fillRect(x - 5, y - 22 - bob, 10, 4);
+      ctx.fillRect(x - 5, y - 18 - bob, 2, 4); ctx.fillRect(x + 3, y - 18 - bob, 2, 4);
+    }
+  });
+}
+
+function loop(now) {
+  const dt = (now - lastTime) / 1000;
+  lastTime = now;
+  if (dt < 0.1 && !isPaused) update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+</script>
+</body>
+</html>
