@@ -4,8 +4,9 @@ import { MAP_WIDTH, MAP_HEIGHT, TILE_SIZE, mapRows, floorColors } from './map';
 
 export function renderGame(ctx: CanvasRenderingContext2D, engine: GameEngine) {
   // Clear background
+  // Clear in logical coordinates (the context is pre-scaled for high-DPI).
   ctx.fillStyle = '#4ade80'; // Outside map grass
-  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  ctx.fillRect(0, 0, MAP_WIDTH * TILE_SIZE, MAP_HEIGHT * TILE_SIZE);
   
   // 1. Draw floor
   for (let y = 0; y < MAP_HEIGHT; y++) {

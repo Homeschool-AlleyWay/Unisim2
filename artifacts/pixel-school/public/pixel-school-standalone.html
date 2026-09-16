@@ -49,7 +49,9 @@
     top: 0; left: 0;
     width: 100%; height: 100%;
     display: block;
-    image-rendering: pixelated;
+    image-rendering: pixelated; /* Use for pixel art aesthetics */
+    image-rendering: crisp-edges;
+    object-fit: contain; /* keep 4:3 on full-height mobile layout */
     background: #4ade80;
   }
   
@@ -62,20 +64,34 @@
     z-index: 10;
   }
   
+  .whimsical-card {
+    background: #FFFDF9;
+    border: 3px solid #1E1B18;
+    box-shadow: 5px 5px 0px #3D332A;
+    border-radius: 16px;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .whimsical-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 7px 7px 0px #3D332A;
+  }
+  .glass-panel {
+    background: rgba(255, 255, 255, 0.75);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+  }
   .hud-box {
-    background: rgba(255,255,255,0.9);
-    backdrop-filter: blur(4px);
     padding: 12px;
-    border-radius: 12px;
-    border: 2px solid #e2e8f0;
     pointer-events: auto;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    color: #1E1B18;
   }
   
   #clock { font-size: 24px; font-weight: 900; line-height: 1; margin-bottom: 4px; }
   #period { font-size: 12px; font-weight: 800; color: #0ea5e9; text-transform: uppercase; letter-spacing: 1px; }
   
-  .btn-group { display: flex; gap: 8px; pointer-events: auto; }
+  .btn-group { display: flex; gap: 8px; pointer-events: auto; padding: 6px; border-radius: 999px; }
   button {
     background: white;
     border: 2px solid #e2e8f0;
@@ -94,8 +110,6 @@
     position: absolute;
     bottom: 24px; left: 24px;
     width: 120px; height: 120px;
-    background: rgba(30,41,59,0.3);
-    border: 2px solid rgba(255,255,255,0.5);
     border-radius: 50%;
     touch-action: none;
     pointer-events: auto;
@@ -124,14 +138,11 @@
   #instructions {
     position: absolute;
     bottom: 24px; right: 24px;
-    background: rgba(255,255,255,0.95);
     padding: 16px;
-    border-radius: 12px;
-    border: 2px solid #e2e8f0;
     font-size: 14px;
-    pointer-events: none;
+    pointer-events: auto;
     max-width: 240px;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    color: #1E1B18;
     z-index: 10;
   }
   @media (max-width: 768px) { #instructions { display: none; } }
@@ -147,11 +158,11 @@
 
 <div id="game-container">
   <div id="ui-top">
-    <div class="hud-box">
+    <div class="hud-box whimsical-card">
       <div id="clock">8:00 AM</div>
       <div id="period">Arrival</div>
     </div>
-    <div class="btn-group">
+    <div class="btn-group glass-panel">
       <button id="btn-pause" title="Play/Pause">
         <svg id="icon-pause" viewBox="0 0 24 24"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>
         <svg id="icon-play" style="display:none;" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
@@ -164,11 +175,11 @@
   
   <canvas id="game-canvas" width="512" height="384"></canvas>
   
-  <div id="joystick-base">
+  <div id="joystick-base" class="glass-panel">
     <div id="joystick-stick"></div>
   </div>
   
-  <div id="instructions">
+  <div id="instructions" class="whimsical-card">
     <div style="font-size: 10px; font-weight: bold; color: #94a3b8; text-transform: uppercase; margin-bottom: 8px;">How to play</div>
     <div style="font-weight: 600; line-height: 1.4; margin-bottom: 8px;">Use <span class="key">W</span> <span class="key">A</span> <span class="key">S</span> <span class="key">D</span> to move. You control the student with the yellow arrow.</div>
     <div style="font-size: 12px; font-weight: bold; color: #0ea5e9;">Watch the other students rush to class as the period changes!</div>
@@ -392,6 +403,24 @@ const canvas = document.getElementById('game-canvas');
 const ctx = canvas.getContext('2d');
 let lastTime = performance.now();
 
+const LOGICAL_W = MAP_WIDTH * TILE_SIZE;
+const LOGICAL_H = MAP_HEIGHT * TILE_SIZE;
+
+// High-DPI Canvas Scaling Helper (pixel-art variant).
+// Snaps the backing store to an integer multiple of the logical resolution so
+// tile edges stay crisp on retina screens; CSS image-rendering handles the rest.
+function setupCrispCanvas(canvas, ctx) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const scale = Math.max(1, Math.floor((rect.width * dpr) / LOGICAL_W));
+  const w = LOGICAL_W * scale, h = LOGICAL_H * scale;
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+}
+setupCrispCanvas(canvas, ctx);
+new ResizeObserver(() => setupCrispCanvas(canvas, ctx)).observe(canvas);
+
 function update(dt) {
   // Update Time (1 real sec = 1 in-game min at 1x speed)
   timeMinutes += dt * timeSpeed;
@@ -479,7 +508,7 @@ function checkCollision(r1) {
 
 function render() {
   ctx.fillStyle = '#4ade80';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
   
   // Floor
   for (let y = 0; y < MAP_HEIGHT; y++) {

@@ -8,7 +8,7 @@ export function Joystick({ onMove }: { onMove: (x: number, y: number) => void })
   const handlePointerDown = (e: React.PointerEvent) => {
     setActive(true);
     updatePos(e.clientX, e.clientY);
-    e.target.setPointerCapture(e.pointerId);
+    e.currentTarget.setPointerCapture(e.pointerId);
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
@@ -20,7 +20,7 @@ export function Joystick({ onMove }: { onMove: (x: number, y: number) => void })
     setActive(false);
     setPos({ x: 0, y: 0 });
     onMove(0, 0);
-    e.target.releasePointerCapture(e.pointerId);
+    e.currentTarget.releasePointerCapture(e.pointerId);
   };
 
   const updatePos = (clientX: number, clientY: number) => {
@@ -47,7 +47,7 @@ export function Joystick({ onMove }: { onMove: (x: number, y: number) => void })
   return (
     <div 
       ref={baseRef}
-      className="w-32 h-32 rounded-full bg-slate-800/30 border-2 border-white/50 backdrop-blur-sm flex items-center justify-center touch-none select-none"
+      className="glass-panel w-32 h-32 rounded-full flex items-center justify-center touch-none select-none"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
