@@ -2,5 +2,6 @@
 type ModuleMap = Record<string, () => Promise<Record<string, unknown>>>;
 export const modules: ModuleMap = {
   "./components/mockups/variations/PixelSchoolCommandDesk.tsx": () => import("../components/mockups/variations/PixelSchoolCommandDesk.tsx"),
-  "./components/mockups/variations/PixelSchoolDaybook.tsx": () => import("../components/mockups/variations/PixelSchoolDaybook.tsx")
+  "./components/mockups/variations/PixelSchoolDaybook.tsx": () => import("../components/mockups/variations/PixelSchoolDaybook.tsx"),
+  "./components/mockups/variations/PixelSchoolRouteBoard.tsx": () => import("../components/mockups/variations/PixelSchoolRouteBoard.tsx")
 };
