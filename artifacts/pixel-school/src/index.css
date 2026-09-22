@@ -124,25 +124,3 @@ canvas {
   image-rendering: crisp-edges;
 }
 
-@layer components {
-  .whimsical-card {
-    background: #FFFDF9;
-    border: 3px solid #1E1B18;
-    box-shadow: 5px 5px 0px #3D332A;
-    border-radius: 16px;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
-  }
-
-  .whimsical-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 7px 7px 0px #3D332A;
-  }
-
-  .glass-panel {
-    background: rgba(255, 255, 255, 0.75);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.5);
-    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
-  }
-}

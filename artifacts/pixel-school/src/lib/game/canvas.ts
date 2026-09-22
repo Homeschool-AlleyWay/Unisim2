@@ -1,20 +1,16 @@
-import { MAP_WIDTH, MAP_HEIGHT, TILE_SIZE } from './map';
+import { WORLD_SIZE } from './world';
 
 /** Logical (unscaled) resolution of the game world in pixels. */
-export const LOGICAL_WIDTH = MAP_WIDTH * TILE_SIZE; // 512
-export const LOGICAL_HEIGHT = MAP_HEIGHT * TILE_SIZE; // 384
+export const LOGICAL_WIDTH = WORLD_SIZE;
+export const LOGICAL_HEIGHT = WORLD_SIZE;
 
 /**
- * High-DPI canvas scaling helper, tuned for pixel art.
+ * High-DPI canvas scaling helper.
  *
- * The generic version (`canvas.width = rect.width * dpr; ctx.scale(dpr, dpr)`)
- * yields fractional scale factors, which anti-aliases every tile edge and
- * defeats the pixel-art look. Instead we:
- *   1. Measure how many device pixels the canvas occupies.
- *   2. Pick the largest *integer* multiple of the logical resolution that fits.
- *   3. Size the backing store to that multiple and scale the context by it.
- * CSS `image-rendering: pixelated` then stretches the remaining fraction
- * with nearest-neighbour sampling, so edges stay crisp at any DPR.
+ * Snaps the backing store to an integer multiple of the logical resolution
+ * (rather than a fractional devicePixelRatio) so rectangle edges stay sharp,
+ * then scales the context so game code keeps drawing in 320x320 coordinates.
+ * CSS `image-rendering: pixelated` stretches any remaining fraction.
  *
  * Returns the integer scale that was applied.
  */

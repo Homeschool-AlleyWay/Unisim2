@@ -1,6 +1,6 @@
-# [Project name]
+# Mobile School Game
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A tiny mobile-first classroom game: steer a blue student around desks on a 320x320 canvas with an on-screen D-pad (or WASD/arrow keys).
 
 ## Run & Operate
 
@@ -22,19 +22,28 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/pixel-school` — the game (React + Vite, frontend only, previewPath `/`). Run: `pnpm --filter @workspace/pixel-school run dev`
+  - `src/lib/game/world.ts` — obstacles, per-axis AABB collision, draw (source of truth for game rules)
+  - `src/lib/game/input.ts` — multi-source input state (pointer IDs + physical key codes)
+  - `src/lib/game/canvas.ts` — integer-scale high-DPI canvas helper
+  - `src/components/game/{GameCanvas,DPad}.tsx` — loop/keyboard and the touch D-pad
+  - `public/pixel-school-standalone.html` — the original single-file version, kept verbatim as reference
+- `artifacts/api-server`, `lib/db` — scaffolded but unused by the game
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- The app was rebuilt (Sept 2026) from a user-supplied single-file HTML game; earlier multi-room simulator (schedule engine, A* students, joystick) was removed.
+- Canvas backing store snaps to an integer multiple of 320 instead of raw devicePixelRatio so edges stay crisp; game code always draws in 320x320 logical coords.
+- Input is tracked per source (pointer ID / key code) and the most recent press wins, so multi-touch and key rollover behave; input clears on blur/visibility loss.
+- Page stays scrollable; `touch-action: none` only on the canvas and D-pad buttons (landscape phones must reach the D-pad).
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Move the blue square with the D-pad or keyboard; desks, teacher desk and walls block movement, with sliding along obstacles.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- User supplies code snippets/files with little or no prose; treat them as "apply this to the app". No emojis in UI.
 
 ## Gotchas
 
