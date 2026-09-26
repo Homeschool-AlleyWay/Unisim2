@@ -1,0 +1,10 @@
+---
+name: Phaser game inside the React artifact
+description: Gotchas from embedding a user-supplied Phaser 3 game (with a DOM-based HUD) in the pixel-school React/wouter artifact.
+---
+
+- `pnpm add phaser` with no range resolves to **Phaser 4**; the user's game targets Phaser 3. Always pin `phaser@^3.x` for this project.
+  **Why:** Phaser 4 installed silently and typechecked fine; only the version check caught it.
+- The game's HUD (`ui/Hud.ts`) is plain DOM appended next to the canvas and opens dialogs that attach `window` keydown listeners, intervals and RAF loops. Anything that outlives the Phaser scene must be registered in the HUD's cleanup set and released in `hud.destroy()`, which the scene calls on shutdown/destroy.
+  **How to apply:** when adding a new dialog/mini-game with a window listener or timer, use `onWindowKey(...)` / add to `cleanups` instead of raw `window.addEventListener`.
+- User's preference so far: keep their delivered game code as-is except for lifecycle fixes; older versions of the app are kept on secondary routes (`/classroom`) rather than deleted.

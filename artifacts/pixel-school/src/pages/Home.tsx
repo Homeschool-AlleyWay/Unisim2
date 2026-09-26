@@ -1,12 +1,21 @@
-import { GameCanvas } from '@/components/game/GameCanvas';
+import { useEffect } from 'react';
+import SchoolGameView from '@/components/SchoolGameView';
 
 export default function Home() {
-  // The page itself stays scrollable (landscape phones need to reach the
-  // D-pad); touch gestures are only suppressed on the canvas and buttons.
+  // Phaser owns the whole viewport here; lock page scroll only while mounted
+  // so other routes (the /classroom mini-game) can still scroll.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
   return (
-    <main className="min-h-[100dvh] w-full flex flex-col items-center bg-[#222] font-sans overscroll-none">
-      <h1 className="sr-only">Mobile School Game</h1>
-      <GameCanvas />
+    <main className="h-[100dvh] w-full bg-[#1d1a2b]">
+      <h1 className="sr-only">Maple Grove School Life</h1>
+      <SchoolGameView height="100dvh" />
     </main>
   );
 }

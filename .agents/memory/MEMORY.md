@@ -1,0 +1,1 @@
+- [Phaser in React artifact](phaser-in-react-artifact.md) — pin phaser@^3 (bare add gives v4); HUD dialogs must register window listeners/timers for teardown on route change.

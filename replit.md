@@ -1,6 +1,6 @@
-# Mobile School Game
+# Maple Grove School Life
 
-A tiny mobile-first classroom game: steer a blue student around desks on a 320x320 canvas with an on-screen D-pad (or WASD/arrow keys).
+A top-down pixel-art school simulator (Phaser 3 + React): follow the bell schedule, attend classes, make friends, play mini-games and catch the bus home. A tiny single-room D-pad mini-game lives at `/classroom`.
 
 ## Run & Operate
 
@@ -23,6 +23,9 @@ A tiny mobile-first classroom game: steer a blue student around desks on a 320x3
 ## Where things live
 
 - `artifacts/pixel-school` — the game (React + Vite, frontend only, previewPath `/`). Run: `pnpm --filter @workspace/pixel-school run dev`
+  - `src/game/` — Maple Grove simulator (Phaser 3; user-supplied). `data/` = rooms, furniture, schedule, dialogue (edit these to customize); `art/` = code-generated pixel art (no image files); `scenes/SchoolScene.ts` = main loop; `ui/Hud.ts` = DOM HUD/dialogs; `systems/GameState.ts` = localStorage autosave
+  - `src/components/SchoolGameView.tsx` — React wrapper mounting the Phaser game; `src/pages/Home.tsx` renders it at `/`
+  - `src/pages/Classroom.tsx` (`/classroom`) — the earlier single-room D-pad mini-game, backed by:
   - `src/lib/game/world.ts` — obstacles, per-axis AABB collision, draw (source of truth for game rules)
   - `src/lib/game/input.ts` — multi-source input state (pointer IDs + physical key codes)
   - `src/lib/game/canvas.ts` — integer-scale high-DPI canvas helper
@@ -32,14 +35,16 @@ A tiny mobile-first classroom game: steer a blue student around desks on a 320x3
 
 ## Architecture decisions
 
-- The app was rebuilt (Sept 2026) from a user-supplied single-file HTML game; earlier multi-room simulator (schedule engine, A* students, joystick) was removed.
+- Sept 2026: the app went single-file D-pad game → user-supplied "Maple Grove" Phaser simulator (zip). The Maple Grove code is kept as delivered under `src/game/`; the D-pad game was moved to `/classroom` rather than deleted.
+- Phaser scale mode is RESIZE, so the mount div must have an explicit height; Home locks `body` overflow only while mounted so `/classroom` can still scroll.
 - Canvas backing store snaps to an integer multiple of 320 instead of raw devicePixelRatio so edges stay crisp; game code always draws in 320x320 logical coords.
 - Input is tracked per source (pointer ID / key code) and the most recent press wins, so multi-touch and key rollover behave; input clears on blur/visibility loss.
 - Page stays scrollable; `touch-action: none` only on the canvas and D-pad buttons (landscape phones must reach the D-pad).
 
 ## Product
 
-- Move the blue square with the D-pad or keyboard; desks, teacher desk and walls block movement, with sliding along obstacles.
+- Maple Grove (`/`): character creator, bell schedule (7:30 → 6 periods → lunch → clubs → 2:40 bus), 28 NPCs with routines, pop quizzes, mini-games (piano, drums, painting, free throws, lab), map (M), speed control, end-of-day report card, autosave.
+- Classroom (`/classroom`): move the blue square with the D-pad or keyboard; desks and walls block movement.
 
 ## User preferences
 
