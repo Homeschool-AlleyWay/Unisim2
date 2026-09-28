@@ -2,17 +2,27 @@
 import Phaser from 'phaser';
 import { renderBackground, PLAYER_LOCKER_X } from '../art/tiles';
 import { buildFurnitureTextures } from '../art/furniture';
-import { buildCharacterSheet, Look } from '../art/characters';
+import { buildCharacterSheet, FRAME_H, FRAME_W, Look, SHEET_COLS, SHEET_ROWS } from '../art/characters';
+import { DPR } from '../display';
 import { buildGrid, MAP_H, MAP_W, ROOMS, roomContaining, SchoolGrid, TILE } from '../data/schoolMap';
 import { buildPlacement, Dir, PlacedObject, Seat } from '../data/furniture';
-import { buildRoster, DAY_END, DAY_START, GROUP_SCHEDULE, nextClassSlot, periodAt, PERIODS, Person, PLAYER_GROUP, Subject, SUBJECTS } from '../data/schedule';
-import { BOOK_FACTS, makeQuiz, STAFF_LINES, studentLine, TEACHER_TIPS } from '../data/dialogue';
+import { buildRoster, DAY_END, DAY_START, GROUP_SCHEDULE, nextClassSlot, Period, periodAt, PERIODS, Person, PLAYER_GROUP, playerSeatIndex, Subject, subjectForRoom, SUBJECTS } from '../data/schedule';
+import { buildDailyPlan, bucketToSlot, isWindowOpen, minRequired, TUTORING_THRESHOLD } from '../systems/SelfPaced';
+import { BOOK_FACTS, STAFF_LINES, studentLine, TEACHER_TIPS } from '../data/dialogue';
 import { Character } from '../entities/Character';
 import { NavGrid, findPath, TilePt } from '../systems/Pathfinding';
 import { NPC, NPCSystem, World } from '../systems/NPCSystem';
 import { Sfx } from '../systems/Audio';
 import { clearSave, DAY_NAMES, letter, loadSave, newSave, SaveData, StatKey, writeSave } from '../systems/GameState';
 import { Hud } from '../ui/Hud';
+import { Classroom3D, CLASS_ROOMS } from '../three/Classroom3D';
+import { getLesson, Lesson } from '../data/curriculum';
+import { Presence, PresenceState, upsertProfile } from '../net/multiplayer';
+import { BroadcastPlayer } from '../systems/BroadcastPlayer';
+
+/** Pop quizzes: at most this many per class period, always exactly 5 questions. */
+const MAX_POP_QUIZZES_PER_CLASS = 2;
+const POP_QUIZ_QUESTIONS = 5;
 
 type Target =
   | { kind: 'npc'; npc: NPC }
@@ -52,6 +62,13 @@ export class SchoolScene extends Phaser.Scene {
   currentRoom = '';
   target: Target | null = null;
   stepTimer = 0;
+  charSheets: Record<string, HTMLCanvasElement> = {};
+  bgCanvas!: HTMLCanvasElement;
+  propCanvases: Record<string, HTMLCanvasElement> = {};
+  class3d: Classroom3D | null = null;
+  prefer2D = false; // while seated: player asked to leave first-person and see the map instead
+  standView3D = false; // while standing: player asked to look around in first-person
+  userZoom = 1; // manual camera zoom multiplier, adjustable at any time
 
   // per-day state
   hasBooks = false;
@@ -67,6 +84,18 @@ export class SchoolScene extends Phaser.Scene {
   onBus = false;
   busCalled = false;
 
+  // live multiplayer (real accounts, alongside NPCs) — see net/multiplayer.ts
+  userId: string | null = null;
+  net: Presence | null = null;
+  remotePlayers: Map<string, Character> = new Map();
+  netBroadcastTimer = 0;
+
+  // Morning broadcast — see systems/BroadcastPlayer.ts
+  broadcast!: BroadcastPlayer;
+  broadcastStarted = false;
+  broadcastMandatoryDone = false;
+  broadcastNewsStarted = false;
+
   constructor() {
     super('SchoolScene');
   }
@@ -78,8 +107,10 @@ export class SchoolScene extends Phaser.Scene {
     this.seats = placement.seats;
 
     // --- Textures
-    this.textures.addCanvas('bg', renderBackground(this.grid));
+    this.bgCanvas = renderBackground(this.grid);
+    this.textures.addCanvas('bg', this.bgCanvas);
     const furn = buildFurnitureTextures();
+    this.propCanvases = furn;
     for (const [k, c] of Object.entries(furn)) this.textures.addCanvas(k, c);
     this.people = buildRoster();
     for (const p of this.people) this.addCharTexture('char_' + p.id, p.look);
@@ -104,7 +135,7 @@ export class SchoolScene extends Phaser.Scene {
       (seatsByRoom[s.room || 'yard'] ??= []).push(s);
     }
     const playerClassSeatIds = new Set<number>();
-    GROUP_SCHEDULE[PLAYER_GROUP].forEach((sub) => playerClassSeatIds.add(seatsByRoom[SUBJECTS[sub].room][0].id));
+    GROUP_SCHEDULE[PLAYER_GROUP].forEach((sub) => { const l = seatsByRoom[SUBJECTS[sub].room]; playerClassSeatIds.add(l[playerSeatIndex(l.length)].id); });
     this.world = {
       nav: this.nav, seats: this.seats, seatsByRoom, teacherSeat, minute: DAY_START, day: 1, periodIndex: 0,
       busPresent: true, timeScale: 1, playerSeatId: null, playerClassSeatIds,
@@ -121,7 +152,7 @@ export class SchoolScene extends Phaser.Scene {
     const cam = this.cameras.main;
     cam.setBounds(0, 0, MAP_W * TILE, MAP_H * TILE);
     cam.setBackgroundColor('#2a4a33');
-    cam.setRoundPixels(true);
+    cam.setRoundPixels(false);
     this.fitZoom();
     this.scale.on('resize', () => this.fitZoom());
 
@@ -138,23 +169,65 @@ export class SchoolScene extends Phaser.Scene {
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => (downAt = { x: p.x, y: p.y }));
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
       if (!downAt || !this.running || this.hud.modalOpen) return;
-      if (Math.hypot(p.x - downAt.x, p.y - downAt.y) < 12) this.tapMove(p.worldX, p.worldY);
+      if (Math.hypot(p.x - downAt.x, p.y - downAt.y) < 12 * DPR) this.tapMove(p.worldX, p.worldY);
       downAt = null;
+    });
+    // Zoom: mouse wheel (desktop) and two-finger pinch (touch), at any time.
+    this.input.on('wheel', (_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
+      if (this.hud.modalOpen) return;
+      this.adjustZoom(dy > 0 ? 0.92 : 1.08);
+    });
+    let pinchDist = 0;
+    this.input.on('pointermove', () => {
+      const pts = this.input.manager.pointers.filter((pt) => pt.isDown);
+      if (pts.length === 2) {
+        const d = Phaser.Math.Distance.Between(pts[0].x, pts[0].y, pts[1].x, pts[1].y);
+        if (pinchDist > 0) this.adjustZoom(d / pinchDist);
+        pinchDist = d;
+      } else pinchDist = 0;
     });
 
     // --- HUD
     this.hud = new Hud(this.game.canvas.parentElement as HTMLElement);
+    this.broadcast = new BroadcastPlayer(this.game.canvas.parentElement as HTMLElement);
+    this.broadcast.onSlide = (s) => this.class3d?.setTV(s.icon, s.title, s.body);
     this.hud.onAction = () => { if (this.running && !this.hud.modalOpen) this.action(); };
     this.hud.onMap = () => this.openMap();
+    this.hud.onZoomIn = () => this.adjustZoom(1.2);
+    this.hud.onZoomOut = () => this.adjustZoom(1 / 1.2);
     this.hud.onSpeed = () => {
       this.userSpeed = this.userSpeed === 1 ? 2 : this.userSpeed === 2 ? 4 : 1;
       this.hud.setSpeedLabel(this.userSpeed + '×');
     };
     this.hud.onFastForward = () => this.toggleFastForward();
     this.hud.onMenu = () => this.openMenu();
+    this.hud.onToggleView = () => {
+      if (this.player.seat) this.prefer2D = !!this.class3d?.active;
+      else this.standView3D = !this.class3d?.active;
+    };
+    this.hud.onStandUp = () => { if (this.player.seat) { this.player.standUp(); this.player.face('down'); } };
+    this.hud.onTakeTest = () => {
+      const per = PERIODS[this.periodIndex];
+      if (per.kind !== 'class') return;
+      const sub = this.currentClassSubject(per);
+      if (sub && this.player.seat?.room === SUBJECTS[sub].room) this.takeUnitTest(sub);
+    };
+    this.hud.onHomework = () => {
+      const items = (Object.keys(this.save.homework) as Subject[])
+        .filter((k) => this.save.homework[k])
+        .map((k) => ({ subject: k, item: this.save.homework[k]! }));
+      this.hud.homeworkPanel(items, (sub) => {
+        const item = this.save.homework[sub];
+        if (!item) return;
+        item.done = true;
+        this.save.grades[sub] = Math.min(100, this.save.grades[sub] + 2);
+        writeSave(this.save);
+        this.refreshHomeworkBadge();
+      });
+    };
     this.hud.setVisible(false);
     this.events.once('shutdown', () => this.hud.destroy());
-    this.events.once('destroy', () => this.hud.destroy());
+    this.events.once('destroy', () => { this.hud.destroy(); this.net?.destroy(); this.broadcast.destroy(); this.class3d?.destroy(); this.class3d = null; });
 
     // Player placeholder until the creator finishes
     this.player = new Character(this, 'char_' + this.people[0].id, 41 * TILE + 8, 49 * TILE + 13);
@@ -166,26 +239,85 @@ export class SchoolScene extends Phaser.Scene {
   private addCharTexture(key: string, look: Look) {
     if (this.textures.exists(key)) this.textures.remove(key);
     const tex = this.textures.addCanvas(key, buildCharacterSheet(look))!;
-    for (let i = 0; i < 16; i++) tex.add(i, 0, (i % 4) * 16, Math.floor(i / 4) * 24, 16, 24);
+    for (let i = 0; i < SHEET_COLS * SHEET_ROWS; i++) tex.add(i, 0, (i % SHEET_COLS) * FRAME_W, Math.floor(i / SHEET_COLS) * FRAME_H, FRAME_W, FRAME_H);
+    tex.setFilter(Phaser.Textures.FilterMode.LINEAR);
+    this.charSheets[key] = tex.getSourceImage() as HTMLCanvasElement;
   }
 
+  private baseZoom = 1;
   private fitZoom() {
     const w = this.scale.width, h = this.scale.height;
-    const z = Math.max(2, Math.min(5, Math.round(Math.min(w, h) / 240)));
-    this.cameras.main.setZoom(z);
+    const base = Math.max(2, Math.min(5, Math.round(Math.min(w, h) / DPR / 240)));
+    this.baseZoom = Math.round(base * DPR);
+    this.applyZoom();
+  }
+
+  private applyZoom() {
+    this.cameras.main.setZoom(this.baseZoom * this.userZoom);
+  }
+
+  /** Zoom in/out at any time, clamped to a sensible range around the fitted base zoom. */
+  private adjustZoom(factor: number) {
+    this.userZoom = Math.max(0.5, Math.min(2.5, this.userZoom * factor));
+    this.applyZoom();
+  }
+
+  // ---------------- Live multiplayer ----------------
+  /** Any signed-in account shows up live to everyone else, alongside the NPCs.
+   *  Never touches lesson content — each viewer still renders their own grade's
+   *  board locally (see currentLesson()); presence only carries look/position. */
+  private startNetwork() {
+    this.net?.destroy();
+    this.net = null;
+    for (const c of this.remotePlayers.values()) c.destroy();
+    this.remotePlayers.clear();
+    if (!this.userId) return;
+    const uid = this.userId;
+    upsertProfile(uid, this.save.name, this.save.schoolGrade, this.save.look).catch(() => {});
+    const initial: PresenceState = {
+      id: uid, username: this.save.name, grade: this.save.schoolGrade, look: this.save.look,
+      x: this.player.x, y: this.player.y, room: this.currentRoom, dir: this.player.dir, pose: this.player.pose, seatId: this.player.seat?.id ?? null,
+    };
+    const net = new Presence(initial);
+    net.onUpdate = (others) => this.syncRemotePlayers(others);
+    this.net = net;
+  }
+
+  private syncRemotePlayers(others: PresenceState[]) {
+    const seen = new Set<string>();
+    for (const o of others) {
+      seen.add(o.id);
+      const key = 'char_net_' + o.id;
+      if (!this.textures.exists(key)) this.addCharTexture(key, o.look);
+      let c = this.remotePlayers.get(o.id);
+      if (!c) {
+        c = new Character(this, key, o.x, o.y);
+        this.remotePlayers.set(o.id, c);
+      }
+      const seat = o.seatId != null ? this.seats.find((s) => s.id === o.seatId) : null;
+      if (seat) c.sitAt(seat);
+      else { c.standUp(); c.setPos(o.x, o.y); c.face(o.dir as Dir); }
+      c.sync();
+    }
+    for (const [id, c] of this.remotePlayers) {
+      if (!seen.has(id)) { c.destroy(); this.remotePlayers.delete(id); }
+    }
   }
 
   // ---------------- Game flow ----------------
   private async showTitle() {
     const existing = loadSave();
-    const res = await this.hud.creator(existing ? { name: existing.name, look: existing.look, day: existing.day } : null);
-    this.save = !res.fresh && existing ? existing : newSave(res.name, res.look);
+    const login = await this.hud.login();
+    this.userId = login.userId;
+    const res = await this.hud.creator(existing ? { name: existing.name, look: existing.look, day: existing.day, schoolGrade: existing.schoolGrade } : null);
+    this.save = !res.fresh && existing ? existing : newSave(res.name, res.look, res.schoolGrade);
     this.addCharTexture('char_player', this.save.look);
     this.player.destroy();
     this.player = new Character(this, 'char_player', 41 * TILE + 8, 49 * TILE + 13);
     this.cameras.main.startFollow(this.player.sprite, true, 0.18, 0.18);
     this.hud.setVisible(true);
     writeSave(this.save);
+    this.startNetwork();
     this.startDay();
     const first = this.save.day === 1 && res.fresh;
     if (first) {
@@ -207,6 +339,15 @@ export class SchoolScene extends Phaser.Scene {
     this.record = { attended: 0, late: 0, missed: 0, quizRight: 0, quizTotal: 0 };
     this.cooldowns.clear(); this.talked.clear(); this.dayLog = [];
     this.onBus = false; this.busCalled = false; this.dayOver = false; this.fastForward = false;
+    this.broadcast.stopNewsLoop();
+    this.broadcastStarted = false;
+    this.broadcastMandatoryDone = false;
+    this.broadcastNewsStarted = false;
+    if (this.save.schoolGrade >= 6) {
+      const isTestDay = DAY_NAMES[(this.save.day - 1) % 5] === 'Friday';
+      this.save.plan = buildDailyPlan(this.save.schoolGrade, this.save.day, isTestDay);
+    } else this.save.plan = null;
+    this.refreshHomeworkBadge();
     this.player.standUp();
     this.player.setVisible(true);
     this.player.setPos(40 * TILE + 8, 49 * TILE + 13);
@@ -254,9 +395,11 @@ export class SchoolScene extends Phaser.Scene {
       b.onclick = () => { Sfx.good(); close(); };
       p.appendChild(b);
     });
+    const wasFriday = s.day % 5 === 0;
     s.day++;
     s.energy = 100;
     writeSave(s);
+    if (wasFriday && s.needsTutoring.length) { await this.runTutoringDay(); return; }
     this.startDay();
   }
 
@@ -267,6 +410,14 @@ export class SchoolScene extends Phaser.Scene {
     const scale = this.fastForward ? 10 : this.userSpeed;
     this.world.timeScale = paused ? 0 : scale;
     this.world.playerSeatId = this.player.seat?.id ?? null;
+
+    if (this.net) {
+      this.netBroadcastTimer -= dt;
+      if (this.netBroadcastTimer <= 0) {
+        this.netBroadcastTimer = 0.35;
+        this.net.update({ x: this.player.x, y: this.player.y, room: this.currentRoom, dir: this.player.dir, pose: this.player.pose, seatId: this.player.seat?.id ?? null });
+      }
+    }
 
     if (!paused) {
       this.minute += (dt * scale) / 1.5; // 1.5 real seconds = 1 game minute at 1×
@@ -282,6 +433,86 @@ export class SchoolScene extends Phaser.Scene {
       this.player.animate(0);
     }
     this.updateTargetsAndHud();
+    this.update3D(dt);
+  }
+
+  // ---------------- First-person 3D ----------------
+  /** A stand-in "seat" anchored at the player's current tile, used to look
+   *  around in first person from wherever they're standing (not just seated). */
+  private standAnchor(): Seat {
+    return { id: -1, tx: Math.floor(this.player.sprite.x / TILE), ty: Math.floor(this.player.sprite.y / TILE), facing: this.player.dir, room: this.currentRoom, kind: 'stand' };
+  }
+
+  /** True whenever a first-person view is offered here — seated OR just standing
+   *  in a modeled room — so the player can pop into first/third-person at any point. */
+  private can3D() {
+    if (!this.running) return false;
+    if (this.player.seat) return CLASS_ROOMS.includes(this.player.seat.room);
+    return CLASS_ROOMS.includes(this.currentRoom);
+  }
+
+  private update3D(dt: number) {
+    const avail = this.can3D();
+    if (!this.player.seat) this.prefer2D = false;
+    if (!avail) this.standView3D = false;
+    // Seated: 3D shows automatically (classic behavior) unless the player asked for map view.
+    // Standing: 3D is opt-in — the player taps "👀 3D view" to look around from where they stand.
+    const want = avail && (this.player.seat ? !this.prefer2D : this.standView3D);
+    if (want && !this.class3d?.active) this.enter3D();
+    else if (!want && this.class3d?.active) this.exit3D();
+    this.hud.setViewMode(!!this.class3d?.active, avail, !!this.player.seat);
+    if (this.class3d?.active) this.class3d.update(this.hud.modalOpen ? dt * 0.5 : dt, this.npcs.npcs);
+  }
+
+  private enter3D() {
+    const seat = this.player.seat ?? this.standAnchor();
+    if (!this.class3d) {
+      const parent = this.game.canvas.parentElement as HTMLElement;
+      this.class3d = new Classroom3D(parent, this.hud.root, { bg: this.bgCanvas, props: this.propCanvases, grid: this.grid, objects: this.objects, looks: Object.fromEntries(this.people.map((p) => [p.id, p.look])) });
+      this.class3d.onTapPerson = (id) => { const n = this.npcs.byId(id); if (n && !this.hud.modalOpen) this.talk(n); };
+    }
+    const room = ROOMS.find((r) => r.id === seat.room)!;
+    this.class3d.open(room, seat, this.save.look);
+    this.refreshBoard();
+    this.game.canvas.style.visibility = 'hidden';
+    this.cameras.main.setVisible(false);
+  }
+
+  private exit3D() {
+    this.class3d?.close();
+    this.game.canvas.style.visibility = '';
+    this.cameras.main.setVisible(true);
+  }
+
+  /** Today's lesson for the seated player's own grade — every other player
+   *  physically in the same room renders this call on their own client with
+   *  their own schoolGrade, so everyone sees the room but their own board. */
+  currentLesson(sub: Subject): Lesson {
+    return getLesson(this.save.schoolGrade, sub);
+  }
+
+  private refreshBoard(quiz?: { q: string; options: string[]; n: number; total: number }) {
+    if (!this.class3d?.active) return;
+    if (quiz) { this.class3d.setBoard(`Pop quiz! (${quiz.n}/${quiz.total})`, [quiz.q, ...quiz.options.map((o, i) => `${i + 1})  ${o}`)]); return; }
+    const per = PERIODS[this.periodIndex];
+    const slot = per.kind === 'class' ? per.slot : nextClassSlot(this.periodIndex);
+    const sub = this.isSelfPaced() ? this.currentClassSubject(per) : (slot !== undefined ? this.playerSubject(slot) : undefined);
+    const room = this.player.seat?.room;
+    if (sub && SUBJECTS[sub].room === room) {
+      const lesson = this.currentLesson(sub);
+      this.class3d.setBoard(lesson.title, lesson.board.slice(1));
+    } else this.class3d.setBoard(`${DAY_NAMES[(this.save.day - 1) % 5]}`, ['Welcome, class!', `Next bell: ${fmtTime(per.end)}`, 'Be kind · Be curious']);
+  }
+
+  private raiseHand() {
+    const per = PERIODS[this.periodIndex];
+    this.player.showEmote('alert', 1500);
+    if (per.kind !== 'class') { this.hud.toast("✋ There's no class right now"); return; }
+    const sub = this.currentClassSubject(per);
+    if (!sub || this.player.seat?.room !== SUBJECTS[sub].room) { this.hud.toast("✋ This isn't a class you're attending right now!"); return; }
+    if (this.quizzesAsked < MAX_POP_QUIZZES_PER_CLASS) { this.quizzesAsked++; this.popQuiz(sub, true); return; }
+    if (this.once('hand')) this.gain(sub === 'pe' ? 'fitness' : sub === 'art' || sub === 'music' ? 'creativity' : 'smarts', 1);
+    this.hud.say(SUBJECTS[sub].teacher, `Great participation today, ${this.save.name}! Let's give someone else a turn.`, [], '#c0504d');
   }
 
   private onMinute() {
@@ -298,9 +529,9 @@ export class SchoolScene extends Phaser.Scene {
 
     // Class attendance & learning
     if (per.kind === 'class') {
-      const sub = this.playerSubject(per.slot!);
-      const room = SUBJECTS[sub].room;
-      if (this.player.seat && this.player.seat.room === room) {
+      const sub = this.currentClassSubject(per);
+      const room = sub ? SUBJECTS[sub].room : undefined;
+      if (sub && this.player.seat && this.player.seat.room === room) {
         if (this.arrivedAt < 0) this.arrivedAt = m;
         this.presence++;
         const since = m - per.start;
@@ -309,7 +540,7 @@ export class SchoolScene extends Phaser.Scene {
           this.gain(stat, 1, true);
           this.save.grades[sub] = Math.min(100, this.save.grades[sub] + 0.5);
         }
-        if ((since === 14 || since === 32) && this.quizzesAsked < 2) { this.quizzesAsked++; this.popQuiz(sub); }
+        if ((since === 14 || since === 32) && this.quizzesAsked < MAX_POP_QUIZZES_PER_CLASS) { this.quizzesAsked++; this.popQuiz(sub); }
       }
     }
     // Eating lunch
@@ -341,8 +572,8 @@ export class SchoolScene extends Phaser.Scene {
 
   private onPeriodChange(prev: number, cur: number) {
     const was = PERIODS[prev];
-    // Grade the class that just ended
-    if (was.kind === 'class') {
+    // Grade the class that just ended (self-paced grades 6-12 grade attendance at sit-time instead — see interact())
+    if (was.kind === 'class' && !this.isSelfPaced()) {
       const sub = this.playerSubject(was.slot!);
       const dur = was.end - was.start;
       if (this.presence >= dur * 0.5) {
@@ -363,12 +594,18 @@ export class SchoolScene extends Phaser.Scene {
     if (this.player.seat && this.player.seat.room !== 'cafeteria' && now.kind === 'class') this.arrivedAt = now.start;
     this.fastForward = false;
     Sfx.bell();
+    if (now.kind === 'class' && !this.broadcastNewsStarted) {
+      this.broadcastNewsStarted = true;
+      this.broadcast.startNewsLoop(this.save.day, () => this.currentRoom === 'hallway' || this.currentRoom === 'lobby');
+    }
     let msg = `🔔 ${now.name}`;
-    if (now.kind === 'class') { const sub = this.playerSubject(now.slot!); msg += ` — ${SUBJECTS[sub].name}`; }
+    if (now.kind === 'class' && this.isSelfPaced()) msg += ' — pick from your bulletin-board plan';
+    else if (now.kind === 'class') { const sub = this.playerSubject(now.slot!); msg += ` — ${SUBJECTS[sub].name}`; }
     if (now.kind === 'lunch') { msg = '🔔 Lunch time!'; this.gotTray = false; this.ateMinutes = 0; }
     if (now.kind === 'dismissal') msg = '🔔 School\'s out! Catch the bus.';
     if (now.kind === 'clubs') msg = '🔔 Clubs & free time!';
     this.hud.toast(msg);
+    this.refreshBoard();
   }
 
   private playerSubject(slot: number): Subject {
@@ -376,7 +613,21 @@ export class SchoolScene extends Phaser.Scene {
   }
 
   private playerClassSeat(slot: number): Seat {
-    return this.world.seatsByRoom[SUBJECTS[this.playerSubject(slot)].room][0];
+    const l = this.world.seatsByRoom[SUBJECTS[this.playerSubject(slot)].room];
+    return l[playerSeatIndex(l.length)];
+  }
+
+  /** Grades 6-12 are self-paced (see systems/SelfPaced.ts): which subject "counts" right now is
+   *  whichever selected subject's room the player is actually sitting in, not a fixed per-slot
+   *  subject. Grades 1-5 keep the classic one-subject-per-period-slot behavior untouched. */
+  private isSelfPaced() { return this.save.schoolGrade >= 6 && !!this.save.plan; }
+  private currentClassSubject(per: Period): Subject | undefined {
+    if (this.isSelfPaced()) {
+      const room = this.player.seat?.room;
+      const sub = room ? subjectForRoom(room) : undefined;
+      return sub && this.save.plan!.selected.includes(sub) ? sub : undefined;
+    }
+    return per.kind === 'class' ? this.playerSubject(per.slot!) : undefined;
   }
 
   // ---------------- Player ----------------
@@ -443,6 +694,15 @@ export class SchoolScene extends Phaser.Scene {
     if (rid && rid !== this.currentRoom) {
       this.currentRoom = rid;
       this.hud.roomBanner(room ? room.name : 'Front Courtyard');
+      this.broadcast.setTickerVisible(rid === 'hallway' || rid === 'lobby');
+      if ((rid === 'hallway' || rid === 'lobby') && !this.broadcastStarted) {
+        this.broadcastStarted = true;
+        this.broadcast.playMandatory(this.save.name).then(async () => {
+          this.broadcastMandatoryDone = true;
+          if (this.isSelfPaced() && !this.save.plan!.locked) await this.goToBulletinBoard();
+          this.hud.toast('🔔 Classes starting soon! Grab your backpack & 2-way, then head to class.');
+        });
+      }
     }
   }
 
@@ -525,6 +785,7 @@ export class SchoolScene extends Phaser.Scene {
   }
 
   private labelFor(t: Target | null): string {
+    if (this.class3d?.active) return PERIODS[this.periodIndex].kind === 'class' ? 'Raise your hand' : '';
     if (this.player.seat) return 'Stand up';
     if (!t) return '';
     if (t.kind === 'npc') {
@@ -537,6 +798,7 @@ export class SchoolScene extends Phaser.Scene {
   }
 
   private action() {
+    if (this.class3d?.active) { this.raiseHand(); return; }
     if (this.player.seat) { this.player.standUp(); Sfx.blip(); return; }
     const t = this.findTarget();
     if (t) this.interact(t);
@@ -568,9 +830,39 @@ export class SchoolScene extends Phaser.Scene {
     if (t.kind === 'seat') {
       const s = t.seat;
       if (this.npcs.npcs.some((n) => n.ch.seat?.id === s.id)) return;
+      if (!this.broadcastMandatoryDone && CLASS_ROOMS.includes(s.room)) {
+        this.hud.toast('📺 Watch the morning broadcast in the hallway before heading to class!');
+        return;
+      }
+      if (this.isSelfPaced() && CLASS_ROOMS.includes(s.room)) {
+        const sub = subjectForRoom(s.room);
+        const plan = this.save.plan!;
+        if (!sub || !plan.selected.includes(sub)) {
+          this.hud.toast(`📌 ${sub ? SUBJECTS[sub].name : 'This class'} isn't on your schedule today — check the bulletin board.`);
+          return;
+        }
+        if (plan.completed.includes(sub)) { this.hud.toast(`✅ You've already finished ${SUBJECTS[sub].name} today!`); return; }
+        const slot = per.kind === 'class' ? per.slot : undefined;
+        if (slot === undefined || !isWindowOpen(plan, sub, slot)) {
+          this.hud.toast(`⏳ ${SUBJECTS[sub].name} isn't in session this period — check your picked time on the bulletin board.`);
+          return;
+        }
+        this.autoPath = [];
+        this.player.sitAt(s);
+        this.arrivedAt = Math.floor(this.minute);
+        if (plan.isTestDay) this.runFridayTest(sub);
+        else {
+          plan.completed.push(sub);
+          this.save.grades[sub] = Math.min(100, this.save.grades[sub] + 1);
+          this.maybeAssignHomework(sub);
+          writeSave(this.save);
+          this.hud.toast(`📖 ${SUBJECTS[sub].name} — checked in! Pop quizzes may come up as you learn.`);
+        }
+        return;
+      }
       this.autoPath = [];
       this.player.sitAt(s);
-      if (per.kind === 'class' && s.room === SUBJECTS[this.playerSubject(per.slot!)].room && this.arrivedAt < 0) this.arrivedAt = Math.floor(this.minute);
+      if (!this.isSelfPaced() && per.kind === 'class' && s.room === SUBJECTS[this.playerSubject(per.slot!)].room && this.arrivedAt < 0) this.arrivedAt = Math.floor(this.minute);
       if (s.room === 'cafeteria' && per.kind === 'lunch' && !this.gotTray) this.hud.toast('Grab a tray from the lunch line first!');
       return;
     }
@@ -711,24 +1003,134 @@ export class SchoolScene extends Phaser.Scene {
     this.refreshHud();
   }
 
-  private async popQuiz(sub: Subject) {
-    const q = makeQuiz(sub);
+  /** A real pop quiz: always exactly POP_QUIZ_QUESTIONS questions, drawn from
+   *  the player's own grade-level curriculum bank for this subject. */
+  private async popQuiz(sub: Subject, volunteered = false) {
     const teacher = SUBJECTS[sub].teacher;
     this.fastForward = false;
-    const k = await this.hud.say(teacher, `Pop quiz, ${this.save.name}! ${q.q}`, q.options.map((o, i) => `${i + 1}. ${o}`), '#c0504d');
-    this.record.quizTotal++;
-    if (k === q.answer) {
-      Sfx.good();
-      this.record.quizRight++;
-      this.save.grades[sub] = Math.min(100, this.save.grades[sub] + 3);
-      this.gain(sub === 'pe' ? 'fitness' : sub === 'art' || sub === 'music' ? 'creativity' : 'smarts', 2);
-      this.player.showEmote('star');
-      this.hud.toast('✅ Correct!');
-    } else {
-      Sfx.bad();
-      this.save.grades[sub] = Math.max(0, this.save.grades[sub] - 1);
-      await this.hud.say(teacher, `Not quite — the answer was "${q.options[q.answer]}". You'll get the next one!`, [], '#c0504d');
+    const bank = this.currentLesson(sub).popQuiz;
+    const picks = bank.slice(0, POP_QUIZ_QUESTIONS);
+    let right = 0;
+    for (let i = 0; i < picks.length; i++) {
+      const q = picks[i];
+      this.refreshBoard({ q: q.q, options: q.choices, n: i + 1, total: picks.length });
+      const intro = i === 0 ? (volunteered ? `Yes, ${this.save.name}? Great — here's a 5-question pop quiz:` : `Pop quiz, ${this.save.name}! (${picks.length} questions)`) : `Question ${i + 1} of ${picks.length}:`;
+      const k = await this.hud.say(teacher, `${intro} ${q.q}`, q.choices.map((o, j) => `${j + 1}. ${o}`), '#c0504d');
+      this.record.quizTotal++;
+      if (k === q.correct) { right++; this.record.quizRight++; Sfx.good(); this.player.showEmote('star'); }
+      else Sfx.bad();
     }
+    const pct = right / picks.length;
+    this.save.grades[sub] = Math.max(0, Math.min(100, this.save.grades[sub] + Math.round((pct - 0.5) * 10)));
+    if (pct >= 0.5) this.gain(sub === 'pe' ? 'fitness' : sub === 'art' || sub === 'music' ? 'creativity' : 'smarts', 2);
+    this.hud.toast(pct === 1 ? `✅ Perfect! ${right}/${picks.length}` : pct >= 0.6 ? `🙂 Nice — ${right}/${picks.length}` : `📚 ${right}/${picks.length} — review your notes!`);
+    await this.hud.say(teacher, `You got ${right} out of ${picks.length} correct. ${pct >= 0.8 ? 'Excellent work!' : pct >= 0.5 ? 'Good effort — keep practicing.' : "Let's go over this material again."}`, [], '#c0504d');
+    this.refreshBoard();
+  }
+
+  /** A longer, graded unit test (distinct from pop quizzes) for the current lesson. */
+  async takeUnitTest(sub: Subject): Promise<{ right: number; total: number } | null> {
+    const lesson = this.currentLesson(sub);
+    if (!lesson.test.length) { this.hud.toast('No unit test available for this lesson yet.'); return null; }
+    const teacher = SUBJECTS[sub].teacher;
+    let right = 0;
+    for (let i = 0; i < lesson.test.length; i++) {
+      const q = lesson.test[i];
+      this.refreshBoard({ q: q.q, options: q.choices, n: i + 1, total: lesson.test.length });
+      const k = await this.hud.say(teacher, `Unit test — question ${i + 1} of ${lesson.test.length}: ${q.q}`, q.choices.map((o, j) => `${j + 1}. ${o}`), '#3d6fb0');
+      if (k === q.correct) right++;
+    }
+    const pct = right / lesson.test.length;
+    this.save.grades[sub] = Math.max(0, Math.min(100, this.save.grades[sub] + Math.round((pct - 0.5) * 20)));
+    this.refreshBoard();
+    await this.hud.say(teacher, `Test complete: ${right}/${lesson.test.length} (${Math.round(pct * 100)}%).`, [], '#3d6fb0');
+    return { right, total: lesson.test.length };
+  }
+
+  /** Friday: every class is a real unit test instead of the normal lesson/quiz flow. Scores
+   *  below the tutoring threshold get flagged for Saturday tutoring in the library. */
+  private async runFridayTest(sub: Subject) {
+    const result = await this.takeUnitTest(sub);
+    const plan = this.save.plan;
+    if (!result || !plan) return;
+    this.save.testScores[sub] = { score: result.right, total: result.total };
+    if (!plan.completed.includes(sub)) plan.completed.push(sub);
+    const pct = result.total ? result.right / result.total : 1;
+    if (pct < TUTORING_THRESHOLD && !this.save.needsTutoring.includes(sub)) this.save.needsTutoring.push(sub);
+    writeSave(this.save);
+    if (plan.completed.length >= plan.selected.length) {
+      this.hud.toast('🔔 All tests complete — early dismissal!');
+      this.endDay(false);
+    }
+  }
+
+  /** Homework for a subject is assigned at least every other day it's attended. Lightweight
+   *  tracking — see Hud.homeworkPanel() for the "mark done" UI. */
+  private maybeAssignHomework(sub: Subject) {
+    const last = this.save.lastHomeworkDay[sub];
+    if (last === undefined || this.save.day - last >= 2) {
+      this.save.homework[sub] = { assignedDay: this.save.day, done: false };
+      this.save.lastHomeworkDay[sub] = this.save.day;
+      this.hud.toast(`📓 Homework assigned: ${SUBJECTS[sub].name}`);
+    }
+    this.refreshHomeworkBadge();
+  }
+
+  private refreshHomeworkBadge() {
+    const pending = Object.values(this.save.homework).filter((h) => h && !h.done).length;
+    this.hud.setHomeworkBadge(this.save.schoolGrade >= 6, pending);
+  }
+
+  /** Right after the morning broadcast, self-paced students lock in today's plan at the
+   *  bulletin board before they can head anywhere else. */
+  private async goToBulletinBoard() {
+    const [bx, by] = [23, 27];
+    const path = findPath(this.nav, this.player.tileX, this.player.tileY, bx, by);
+    if (path && path.length) {
+      this.autoPath = path;
+      await new Promise<void>((resolve) => {
+        const check = () => { if (!this.autoPath.length) resolve(); else setTimeout(check, 100); };
+        check();
+      });
+    }
+    this.player.setPos(bx * TILE + 8, by * TILE + 13);
+    this.player.face('up');
+    const plan = await this.hud.bulletinBoard(this.save.plan!);
+    this.save.plan = plan;
+    writeSave(this.save);
+  }
+
+  /** A special Saturday that replaces the normal school day: 30-minute review sessions in the
+   *  library for any subject that scored below the tutoring threshold on Friday's tests. */
+  private async runTutoringDay() {
+    this.hud.setVisible(true);
+    this.player.setVisible(true);
+    const libSeats = this.world.seatsByRoom['library'];
+    const spot = libSeats?.[0] ?? { tx: 26, ty: 6 };
+    this.player.setPos(spot.tx * TILE + 8, spot.ty * TILE + 13);
+    this.cameras.main.centerOn(spot.tx * TILE, spot.ty * TILE);
+    this.hud.toast('📚 Saturday Tutoring — in the library');
+    const subs = [...this.save.needsTutoring];
+    for (const sub of subs) {
+      const teacher = SUBJECTS[sub].teacher;
+      await this.hud.say(teacher, `Let's spend 30 minutes on ${SUBJECTS[sub].name} — your test showed a few gaps to close.`, [], '#6b4fa0');
+      const lesson = this.currentLesson(sub);
+      const bank = lesson.popQuiz.length ? lesson.popQuiz : lesson.test;
+      const count = Math.min(bank.length, 3);
+      let right = 0;
+      for (let i = 0; i < count; i++) {
+        const q = bank[i];
+        const k = await this.hud.say(teacher, `Review ${i + 1}/${count}: ${q.q}`, q.choices.map((o, j) => `${j + 1}. ${o}`), '#6b4fa0');
+        if (k === q.correct) right++;
+      }
+      this.save.grades[sub] = Math.min(100, this.save.grades[sub] + 3);
+      await this.hud.say(teacher, `Nice work — ${right}/${count} on review. That'll help on Monday!`, [], '#6b4fa0');
+      writeSave(this.save);
+    }
+    this.save.needsTutoring = [];
+    writeSave(this.save);
+    this.hud.toast('🌞 Tutoring complete — see you Monday!');
+    this.startDay();
   }
 
   private toggleFastForward() {
@@ -742,6 +1144,15 @@ export class SchoolScene extends Phaser.Scene {
   private objective(): { html: string; target: TilePt | null; seat?: Seat } {
     const per = PERIODS[this.periodIndex];
     const s = this.player.seat;
+    if (this.isSelfPaced()) {
+      if (!this.hasBooks) return { html: `Grab your books from <b>locker #${PLAYER_LOCKER_X} ★</b> in the hallway`, target: [PLAYER_LOCKER_X, 19] };
+      if (per.kind === 'arrival' && !this.save.plan!.locked) return { html: 'Check the <b>bulletin board</b> in the lobby for today\'s picks', target: [23, 27] };
+      const sub = this.currentClassSubject(per);
+      if (sub) return { html: `In class: <b>${SUBJECTS[sub].name}</b> with ${SUBJECTS[sub].teacher} — pay attention for pop quizzes!`, target: null };
+      const remaining = this.save.plan!.selected.filter((x) => !this.save.plan!.completed.includes(x));
+      if (!remaining.length) return { html: this.save.plan!.isTestDay ? 'All tests done — enjoy early dismissal!' : "Today's picked classes are all done! Explore or make friends.", target: null };
+      return { html: `Head to one of today's classes: <b>${remaining.map((x) => SUBJECTS[x].name).join(', ')}</b> (check your picked time)`, target: null };
+    }
     if (per.kind === 'arrival') {
       if (!this.hasBooks) return { html: `Grab your books from <b>locker #${PLAYER_LOCKER_X} ★</b> in the hallway`, target: [PLAYER_LOCKER_X, 19] };
       const seat = this.playerClassSeat(0);
@@ -780,7 +1191,7 @@ export class SchoolScene extends Phaser.Scene {
 
   private updateTargetsAndHud() {
     if (!this.save || !this.running) { this.arrow.setVisible(false); this.seatMark.setVisible(false); return; }
-    const t = this.findTarget();
+    const t = this.class3d?.active ? null : this.findTarget();
     this.target = t;
     this.hud.setPrompt(this.hud.modalOpen ? '' : this.labelFor(t));
     const obj = this.objective();

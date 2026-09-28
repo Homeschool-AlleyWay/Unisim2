@@ -1,0 +1,109 @@
+// Real multiplayer: any signed-in account (not just "family"/local saves) can
+// appear live in the same shared school, alongside the NPCs. Backed by a real
+// Supabase project (Postgres + Auth + Realtime) — see the project's profiles,
+// notebook_entries and assessment_results tables.
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import type { Look } from '../art/characters';
+import type { Grade } from '../data/curriculum';
+
+const SUPABASE_URL = 'https://anuiykmxbagquiqbndnw.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFudWl5a214YmFncXVpcWJuZG53Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA1NjExNDMsImV4cCI6MjEwNjEzNzE0M30.h7dae08iNWrUpAH_LWo09Z_FGv03t8s_C1OsHSGsg0s';
+
+export interface Profile { id: string; username: string; grade: Grade; look: Look }
+
+export interface PresenceState {
+  id: string;
+  username: string;
+  grade: Grade;
+  look: Look;
+  x: number;
+  y: number;
+  room: string;
+  dir: string;
+  pose: string;
+  seatId: number | null;
+}
+
+let client: SupabaseClient | null = null;
+export function getSupabase(): SupabaseClient {
+  if (!client) client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
+  return client;
+}
+
+/** Real account signup/sign-in — any player, from any device, not just a shared local save. */
+export async function signUp(email: string, password: string) {
+  return getSupabase().auth.signUp({ email, password });
+}
+export async function signIn(email: string, password: string) {
+  return getSupabase().auth.signInWithPassword({ email, password });
+}
+export async function signOut() {
+  return getSupabase().auth.signOut();
+}
+export async function currentUserId(): Promise<string | null> {
+  const { data } = await getSupabase().auth.getSession();
+  return data.session?.user.id ?? null;
+}
+
+export async function upsertProfile(id: string, username: string, grade: Grade, look: Look) {
+  return getSupabase().from('profiles').upsert({ id, username, grade, look, updated_at: new Date().toISOString() });
+}
+export async function fetchProfile(id: string): Promise<Profile | null> {
+  const { data } = await getSupabase().from('profiles').select('*').eq('id', id).maybeSingle();
+  return data as Profile | null;
+}
+
+export async function saveNotebookEntry(userId: string, lessonId: string, content: string) {
+  return getSupabase().from('notebook_entries').upsert({ user_id: userId, lesson_id: lessonId, content, updated_at: new Date().toISOString() }, { onConflict: 'user_id,lesson_id' });
+}
+export async function loadNotebookEntry(userId: string, lessonId: string): Promise<string> {
+  const { data } = await getSupabase().from('notebook_entries').select('content').eq('user_id', userId).eq('lesson_id', lessonId).maybeSingle();
+  return data?.content ?? '';
+}
+
+export async function recordAssessment(userId: string, lessonId: string, kind: 'popquiz' | 'test', score: number, total: number) {
+  return getSupabase().from('assessment_results').insert({ user_id: userId, lesson_id: lessonId, kind, score, total });
+}
+
+/**
+ * Live presence: every signed-in player in the same channel sees everyone
+ * else's avatar move in real time (via Supabase Realtime), on top of the
+ * always-present NPCs. Each player's own client still renders their own
+ * grade's lesson content — presence only carries position/look/room, never
+ * lesson content, so nobody's board is changed by anyone else being nearby.
+ */
+export class Presence {
+  private channel;
+  private me: PresenceState;
+  onUpdate: (others: PresenceState[]) => void = () => {};
+
+  constructor(me: PresenceState) {
+    this.me = me;
+    this.channel = getSupabase().channel('maple-grove-school', { config: { presence: { key: me.id } } });
+    this.channel.on('presence', { event: 'sync' }, () => this.emit());
+    this.channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') this.channel.track(this.me);
+    });
+  }
+
+  private emit() {
+    const state = this.channel.presenceState<PresenceState>();
+    const others: PresenceState[] = [];
+    for (const key of Object.keys(state)) {
+      if (key === this.me.id) continue;
+      const entries = state[key];
+      if (entries && entries[0]) others.push(entries[0]);
+    }
+    this.onUpdate(others);
+  }
+
+  /** Call at most a few times a second — Realtime presence is not meant for 60fps updates. */
+  update(patch: Partial<PresenceState>) {
+    Object.assign(this.me, patch);
+    this.channel.track(this.me);
+  }
+
+  destroy() {
+    this.channel.unsubscribe();
+  }
+}

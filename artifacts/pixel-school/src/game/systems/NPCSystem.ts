@@ -3,7 +3,7 @@ import Phaser from 'phaser';
 import { Character } from '../entities/Character';
 import type { Seat, Dir } from '../data/furniture';
 import { TILE } from '../data/schoolMap';
-import { DAY_START, GROUP_SCHEDULE, Group, PERIODS, Person, PLAYER_GROUP, SUBJECTS, nextClassSlot } from '../data/schedule';
+import { DAY_START, GROUP_SCHEDULE, Group, PERIODS, Person, PLAYER_GROUP, SUBJECTS, nextClassSlot, playerSeatIndex } from '../data/schedule';
 import { findPath, NavGrid, TilePt } from './Pathfinding';
 
 export interface World {
@@ -145,7 +145,8 @@ export class NPCSystem {
     const subject = GROUP_SCHEDULE[g][slot];
     const room = SUBJECTS[subject].room;
     const seats = this.w.seatsByRoom[room];
-    const idx = g === PLAYER_GROUP ? n.groupIndex + 1 : n.groupIndex;
+    const p = playerSeatIndex(seats.length);
+    const idx = g === PLAYER_GROUP && n.groupIndex >= p ? n.groupIndex + 1 : n.groupIndex;
     return seats[idx % seats.length];
   }
 
@@ -172,6 +173,15 @@ export class NPCSystem {
         // Greet students at the classroom door
         const s = this.w.teacherSeat[room];
         return { key: 'door' + this.w.periodIndex, steps: () => [{ tx: s.tx + 1, ty: s.ty + 2, face: 'down', wait: 99 }] };
+      }
+      if (per.kind === 'class') {
+        // Lecture: pace in front of the board, then return to the desk
+        const s = this.w.teacherSeat[room];
+        const spots = [[s.tx - 2, s.ty], [s.tx + 2, s.ty], [s.tx - 1, s.ty], [s.tx + 3, s.ty], [s.tx - 3, s.ty]].filter(
+          ([x, y]) => !this.w.nav.isSolid(x, y) && !this.w.seats.some((q) => q.tx === x && q.ty === y && q.kind !== 'teacher'));
+        const go = spots.length && n.wanderN % 2 === 0;
+        const [px, py] = go ? spots[Math.floor(Math.random() * spots.length)] : [s.tx, s.ty];
+        return { key: 'lecture' + n.wanderN, steps: () => [{ tx: px, ty: py, face: 'down', wait: go ? 3 + Math.floor(Math.random() * 3) : 5 + Math.floor(Math.random() * 4) }] };
       }
       return { key: 'post', steps: () => seatStep(this.w.teacherSeat[room]) };
     }

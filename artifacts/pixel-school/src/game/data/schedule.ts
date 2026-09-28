@@ -48,6 +48,21 @@ export const SUBJECTS: Record<Subject, { name: string; room: string; teacher: st
   reading: { name: 'Library', room: 'library', teacher: 'Mrs. Lin' },
 };
 
+/** Grades 6-12 run traditional A/B-day block scheduling: only some subjects are "due" each
+ *  day (fewer classes → each can run the full 45-minute period instead of being squeezed). */
+export const AB_SPLIT: Record<'A' | 'B', Subject[]> = {
+  A: ['math', 'science', 'english', 'pe'],
+  B: ['reading', 'art', 'music', 'english'],
+};
+export function abDayType(day: number): 'A' | 'B' { return day % 2 === 1 ? 'A' : 'B'; }
+export function subjectForRoom(room: string): Subject | undefined {
+  return (Object.keys(SUBJECTS) as Subject[]).find((k) => SUBJECTS[k].room === room);
+}
+/** Which subjects a student is on the hook for today. Grades 1-5 keep the classic all-subjects day. */
+export function dueSubjectsFor(grade: number, day: number): Subject[] {
+  return grade >= 6 ? AB_SPLIT[abDayType(day)] : (Object.keys(SUBJECTS) as Subject[]);
+}
+
 export type Group = 'A' | 'B' | 'C';
 export const GROUP_SCHEDULE: Record<Group, Subject[]> = {
   A: ['math', 'science', 'english', 'pe', 'art', 'reading'],
@@ -97,3 +112,6 @@ export function buildRoster(): Person[] {
   staff('Ms. Patty', 'office', { skin: '#f8dcc4', hair: '#ecc66e', hairStyle: 'long', shirt: '#8b6fd1', pants: '#2d2a33', outfit: 'blazer' }, 'cheerful');
   return people;
 }
+
+/** Which seat (index into a room's seat list) belongs to the player: a middle seat with a good view. */
+export const playerSeatIndex = (count: number) => Math.floor(count / 2);

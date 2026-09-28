@@ -23,7 +23,7 @@ export class Character {
     this.x = x;
     this.y = y;
     this.shadow = scene.add.image(x, y, 'shadow').setOrigin(0.5, 0.6);
-    this.sprite = scene.add.sprite(x, y, texKey, 0).setOrigin(0.5, 1);
+    this.sprite = scene.add.sprite(x, y, texKey, 0).setOrigin(0.5, 1).setScale(0.25);
     this.sync();
   }
 
@@ -78,12 +78,12 @@ export class Character {
     let stepped = false;
     if (this.moving) {
       this.animT += dt * speedScale;
-      if (this.animT > 0.13) {
+      if (this.animT > 0.11) {
         this.animT = 0;
         this.stepPhase = (this.stepPhase + 1) % 4;
-        stepped = this.stepPhase % 2 === 1;
+        stepped = this.stepPhase % 2 === 0;
       }
-      this.pose = (['w1', 'stand', 'w2', 'stand'] as Pose[])[this.stepPhase];
+      this.pose = (['w1', 'w2', 'w3', 'w4'] as Pose[])[this.stepPhase];
     } else if (!this.seat) {
       this.pose = 'stand';
       this.stepPhase = 0;
@@ -95,13 +95,13 @@ export class Character {
   sync() {
     const idx = frameIndex(DIRS.includes(this.dir as any) ? (this.dir as any) : 'down', this.pose);
     this.sprite.setFrame(idx);
-    this.sprite.setPosition(Math.round(this.x), Math.round(this.y) + 1);
+    this.sprite.setPosition(this.x, this.y + 1);
     this.sprite.setDepth(this.y);
-    this.shadow.setPosition(Math.round(this.x), Math.round(this.y) - 1);
+    this.shadow.setPosition(this.x, this.y - 1);
     this.shadow.setDepth(2);
     this.shadow.setVisible(this.visible && this.pose !== 'sit');
     if (this.emote) {
-      this.emote.setPosition(Math.round(this.x), Math.round(this.y) - 24 + (this.pose === 'sit' ? 3 : 0));
+      this.emote.setPosition(this.x, this.y - 24 + (this.pose === 'sit' ? 2 : 0));
       this.emote.setDepth(10000 + this.y);
       if (this.scene.time.now > this.emoteUntil) this.emote.setVisible(false);
     }

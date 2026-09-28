@@ -58,7 +58,7 @@ export const CSS = `
 .msg-creator{display:flex;gap:14px;flex-wrap:wrap}
 .msg-prev{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:6px;margin:auto}
 @media (max-width:520px){.msg-prev{flex-direction:row;flex-wrap:wrap;justify-content:center}}
-.msg-prev canvas{width:128px;height:192px;image-rendering:pixelated;background:#f3e6cf;border:3px solid #2b2033;border-radius:12px}
+.msg-prev canvas{width:128px;height:192px;background:#f3e6cf;border:3px solid #2b2033;border-radius:12px}
 .msg-name{font-family:inherit;font-size:17px;border:3px solid #2b2033;border-radius:8px;padding:5px 8px;width:150px;background:#fff}
 .msg-title{font-size:30px;font-weight:700;line-height:1;margin:0 0 2px;color:#3d6fb0;text-shadow:0 2px 0 #2b2033}
 .msg-grid{display:grid;grid-template-columns:1fr auto auto;gap:3px 10px;font-size:15px}
@@ -79,4 +79,12 @@ export const CSS = `
 .msg-hearts{color:#e2445c;letter-spacing:1px}
 @media (max-width:520px){.msg-clock{min-width:104px;padding:3px 8px}.msg-clock .t{font-size:17px}.msg-stats{flex:1;gap:3px;padding:3px 4px}.msg-energy{width:40px}.msg-btns{position:absolute;right:0;top:100%;margin-top:6px;flex-direction:column}.msg-ib{width:36px;height:36px;font-size:15px}.msg-obj{top:66px;left:8px;transform:none;text-align:left;font-size:13px;max-width:calc(100vw - 66px)}.msg-toasts{top:118px}.msg-chip{font-size:12px;padding:1px 3px}.msg-panel{padding:12px}.msg-panel h2{font-size:21px}.msg-prev canvas{width:88px;height:132px}.msg-creator{gap:8px}.msg-row{margin:4px 0;gap:4px}.msg-row label{width:64px;font-size:13px}.msg-sw{width:25px;height:25px}}
 @media (hover:hover) and (pointer:fine){.msg-pad{opacity:.55}}
+
+.msg-root.m3d .msg-pad{display:none}
+.msg-3d{position:absolute;left:14px;bottom:22px;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.msg-3d button{pointer-events:auto;border:3px solid #2b2033;border-radius:12px;background:#fff8ec;box-shadow:0 3px 0 #2b2033;padding:8px 12px;font-size:15px;font-weight:800;color:#2b2033;text-align:left}
+.msg-3d button:active{transform:translateY(2px);box-shadow:0 1px 0 #2b2033}
+.msg-3d button.hi{background:#ffd84d}
+.msg-3d button[hidden]{display:none}
+.msg-look{position:absolute;left:50%;bottom:120px;transform:translateX(-50%);background:#2b2033b3;color:#fff8ec;border-radius:10px;padding:4px 10px;font-size:13px;font-weight:700;pointer-events:none;transition:opacity .6s}
 `;

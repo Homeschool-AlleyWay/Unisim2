@@ -1,7 +1,11 @@
 // DOM overlay: HUD, touch controls, dialogs, menus and mini-games.
 import { CSS } from './styles';
-import { buildCharacterSheet, HAIR_COLORS, HAIR_STYLES, Look, OUTFITS, PANTS_COLORS, randomLook, SHIRT_COLORS, SKIN_TONES } from '../art/characters';
+import { ACCESSORIES, buildCharacterSheet, EYE_COLORS, FRAME_H, FRAME_W, HAIR_COLORS, HAIR_STYLES, Look, OUTFITS, PANTS_COLORS, randomLook, SHIRT_COLORS, SHOE_COLORS, SKIN_TONES } from '../art/characters';
+import { Grade, GRADES } from '../data/curriculum';
 import { Sfx } from '../systems/Audio';
+import { PERIODS, Subject, SUBJECTS } from '../data/schedule';
+import { Bucket, DailyPlan, minRequired } from '../systems/SelfPaced';
+import type { HomeworkItem } from '../systems/GameState';
 
 export type DirKey = 'up' | 'down' | 'left' | 'right';
 
@@ -40,6 +44,18 @@ export class Hud {
   onSpeed: () => void = () => {};
   onFastForward: () => void = () => {};
   onMenu: () => void = () => {};
+  onZoomIn: () => void = () => {};
+  onZoomOut: () => void = () => {};
+  onToggleView: () => void = () => {};
+  onStandUp: () => void = () => {};
+  onTakeTest: () => void = () => {};
+  onHomework: () => void = () => {};
+  private homeworkBtn!: HTMLButtonElement;
+  private viewBtn!: HTMLButtonElement;
+  private standBtn!: HTMLButtonElement;
+  private testBtn!: HTMLButtonElement;
+  private lookHint!: HTMLElement;
+  private in3D = false;
   private clockT!: HTMLElement; private clockD!: HTMLElement; private clockP!: HTMLElement;
   private statsBox!: HTMLElement; private obj!: HTMLElement; private toasts!: HTMLElement; private room!: HTMLElement;
   private prompt!: HTMLElement; private ff!: HTMLButtonElement; private speedBtn!: HTMLButtonElement; private soundBtn!: HTMLButtonElement;
@@ -65,11 +81,21 @@ export class Hud {
     const mapBtn = el('button', 'msg-ib', '🗺️') as HTMLButtonElement;
     mapBtn.title = 'Map & schedule (M)';
     mapBtn.onclick = () => { Sfx.blip(); this.onMap(); };
+    const zoomInBtn = el('button', 'msg-ib', '🔍+') as HTMLButtonElement;
+    zoomInBtn.title = 'Zoom in';
+    zoomInBtn.onclick = () => { Sfx.blip(); this.onZoomIn(); };
+    const zoomOutBtn = el('button', 'msg-ib', '🔍−') as HTMLButtonElement;
+    zoomOutBtn.title = 'Zoom out';
+    zoomOutBtn.onclick = () => { Sfx.blip(); this.onZoomOut(); };
     this.soundBtn = el('button', 'msg-ib', '🔊') as HTMLButtonElement;
     this.soundBtn.onclick = () => { Sfx.setMuted(!Sfx.isMuted()); this.soundBtn.textContent = Sfx.isMuted() ? '🔇' : '🔊'; };
     const menuBtn = el('button', 'msg-ib', '☰') as HTMLButtonElement;
     menuBtn.onclick = () => { Sfx.blip(); this.onMenu(); };
-    btns.append(this.speedBtn, mapBtn, this.soundBtn, menuBtn);
+    this.homeworkBtn = el('button', 'msg-ib', '📓') as HTMLButtonElement;
+    this.homeworkBtn.title = 'Homework planner';
+    this.homeworkBtn.hidden = true;
+    this.homeworkBtn.onclick = () => { Sfx.blip(); this.onHomework(); };
+    btns.append(this.speedBtn, mapBtn, zoomInBtn, zoomOutBtn, this.homeworkBtn, this.soundBtn, menuBtn);
     top.append(clock, this.statsBox, btns);
     this.obj = el('div', 'msg-obj');
     this.toasts = el('div', 'msg-toasts');
@@ -100,7 +126,18 @@ export class Hud {
     const up = () => this.aBtn.classList.remove('on');
     this.aBtn.addEventListener('pointerup', up); this.aBtn.addEventListener('pointerleave', up);
     act.append(this.ff, this.prompt, this.aBtn);
-    this.root.append(top, this.obj, this.toasts, this.room, pad, act);
+    const bar3d = el('div', 'msg-3d');
+    this.viewBtn = el('button', 'hi', '👀 3D view') as HTMLButtonElement;
+    this.viewBtn.onclick = () => { Sfx.blip(); this.onToggleView(); };
+    this.standBtn = el('button', '', '🚶 Stand up') as HTMLButtonElement;
+    this.standBtn.onclick = () => { Sfx.blip(); this.onStandUp(); };
+    this.testBtn = el('button', '', '📝 Take test') as HTMLButtonElement;
+    this.testBtn.onclick = () => { Sfx.blip(); this.onTakeTest(); };
+    this.viewBtn.hidden = this.standBtn.hidden = this.testBtn.hidden = true;
+    bar3d.append(this.viewBtn, this.standBtn, this.testBtn);
+    this.lookHint = el('div', 'msg-look', 'Drag to look around · tap a classmate to whisper');
+    this.lookHint.style.opacity = '0';
+    this.root.append(top, this.obj, this.toasts, this.room, pad, act, bar3d, this.lookHint);
   }
 
   setClock(day: string, time: string, period: string) {
@@ -114,6 +151,29 @@ export class Hud {
     this.statsBox.innerHTML = `<span class="msg-chip" title="Energy">⚡<span class="msg-energy"><i style="width:${Math.max(0, Math.min(100, energy))}%;background:${col}"></i></span></span>
       <span class="msg-chip" title="Smarts">📘 ${s.smarts}</span><span class="msg-chip" title="Fitness">🏀 ${s.fitness}</span>
       <span class="msg-chip" title="Creativity">🎨 ${s.creativity}</span><span class="msg-chip" title="Friendship">💬 ${s.social}</span>`;
+  }
+
+  /** in3D: the first-person view is showing; available: a 3D view can be entered here;
+   *  seated: the player is sitting (vs. just standing and looking around). */
+  setViewMode(in3D: boolean, available: boolean, seated: boolean) {
+    if (in3D !== this.in3D) {
+      this.in3D = in3D;
+      this.root.classList.toggle('m3d', in3D);
+      this.aBtn.textContent = in3D && seated ? '✋' : 'A';
+      if (in3D) { this.lookHint.style.opacity = '1'; setTimeout(() => (this.lookHint.style.opacity = '0'), 3500); }
+    }
+    this.viewBtn.hidden = !available && !in3D;
+    this.standBtn.hidden = !in3D || !seated;
+    this.testBtn.hidden = !in3D || !seated;
+    const label = in3D ? '🗺️ Map view' : '👀 3D view';
+    if (this.viewBtn.textContent !== label) this.viewBtn.textContent = label;
+    this.viewBtn.classList.toggle('hi', !in3D);
+  }
+
+  setHomeworkBadge(visible: boolean, pendingCount: number) {
+    this.homeworkBtn.hidden = !visible;
+    this.homeworkBtn.textContent = pendingCount > 0 ? `📓${pendingCount}` : '📓';
+    this.homeworkBtn.classList.toggle('hi', pendingCount > 0);
   }
 
   setSpeedLabel(t: string) { this.speedBtn.textContent = t; }
@@ -167,7 +227,9 @@ export class Hud {
   /** Speech box. Resolves with the index of the chosen option (0 when there are none). */
   say(who: string, text: string, options: string[] = [], color = '#3d6fb0'): Promise<number> {
     return new Promise((resolve) => {
-      const { m, p, close } = this.modal(true);
+      const { m, p, close: closeModal } = this.modal(true);
+      // Every exit path also drops the (possibly not-yet-armed) key listener.
+      const close = () => { cancelArm(); offKey(); closeModal(); };
       p.classList.add('msg-dialog');
       const w = el('div', 'who', who);
       w.style.background = color;
@@ -202,18 +264,18 @@ export class Hud {
       tick();
       m.addEventListener('pointerdown', (e) => { if (!done && e.target !== m) finish(); });
       const key = (e: KeyboardEvent) => {
-        if (!m.parentNode) { offKey(); return; }
+        if (!m.parentNode) { close(); return; }
         if (['Enter', ' ', 'e', 'E'].includes(e.key)) {
           e.preventDefault();
           if (!done) finish();
-          else if (!options.length) { offKey(); close(); resolve(0); }
+          else if (!options.length) { close(); resolve(0); }
         }
         const n = parseInt(e.key, 10);
-        if (done && n >= 1 && n <= options.length) { offKey(); close(); resolve(n - 1); }
+        if (done && n >= 1 && n <= options.length) { close(); resolve(n - 1); }
       };
       let offKey: () => void = () => {};
       const armT = setTimeout(() => { this.cleanups.delete(cancelArm); offKey = this.onWindowKey(key); }, 150);
-      const cancelArm = () => clearTimeout(armT);
+      const cancelArm = () => { this.cleanups.delete(cancelArm); clearTimeout(armT); };
       this.cleanups.add(cancelArm);
     });
   }
@@ -228,12 +290,136 @@ export class Hud {
     });
   }
 
+  // ---------- Account / sign in ----------
+  /** Real accounts, not just a family-shared local save — sign in or make one to
+   *  appear live to any other player. "Play offline" skips multiplayer entirely. */
+  login(): Promise<{ userId: string | null }> {
+    return new Promise(async (resolve) => {
+      const { signIn, signUp } = await import('../net/multiplayer');
+      const { p, close } = this.modal();
+      let mode: 'signin' | 'signup' = 'signin';
+      const render = () => {
+        p.innerHTML = `<div class="msg-title">Maple Grove</div><h2>${mode === 'signin' ? 'Sign in' : 'Create an account'}</h2>
+          <p>Sign in with your own account to show up live to any other player at Maple Grove — not just on this device.</p>`;
+        const email = el('input', 'msg-name', '') as HTMLInputElement;
+        email.type = 'email'; email.placeholder = 'Email'; email.style.width = '100%';
+        const pass = el('input', 'msg-name', '') as HTMLInputElement;
+        pass.type = 'password'; pass.placeholder = 'Password'; pass.style.width = '100%'; pass.style.marginTop = '6px';
+        const err = el('p', 'msg-help', '');
+        err.style.color = '#c0504d';
+        const go = el('button', 'msg-btn go', mode === 'signin' ? '▶ Sign in' : '▶ Create account') as HTMLButtonElement;
+        go.style.width = '100%'; go.style.marginTop = '10px';
+        go.onclick = async () => {
+          if (!email.value || pass.value.length < 6) { err.textContent = 'Enter an email and a password (6+ characters).'; return; }
+          go.textContent = 'Please wait…'; go.disabled = true;
+          try {
+            const { data, error } = mode === 'signin' ? await signIn(email.value, pass.value) : await signUp(email.value, pass.value);
+            if (error) { err.textContent = error.message; go.disabled = false; go.textContent = mode === 'signin' ? '▶ Sign in' : '▶ Create account'; return; }
+            if (!data.session) { err.textContent = 'Check your email to confirm your account, then sign in.'; go.disabled = false; go.textContent = '▶ Sign in'; mode = 'signin'; return; }
+            close(); resolve({ userId: data.user?.id ?? null });
+          } catch (e: any) {
+            err.textContent = 'Could not reach the server — playing offline instead.';
+            go.disabled = false;
+          }
+        };
+        const switchMode = el('button', 'msg-btn alt', mode === 'signin' ? "New here? Create an account" : 'Already have an account? Sign in') as HTMLButtonElement;
+        switchMode.style.width = '100%'; switchMode.style.marginTop = '6px'; switchMode.style.textAlign = 'center';
+        switchMode.onclick = () => { mode = mode === 'signin' ? 'signup' : 'signin'; render(); };
+        const offline = el('button', 'msg-btn alt', '📵 Play offline (just me + NPCs)') as HTMLButtonElement;
+        offline.style.width = '100%'; offline.style.marginTop = '6px'; offline.style.textAlign = 'center';
+        offline.onclick = () => { close(); resolve({ userId: null }); };
+        p.append(email, pass, err, go, switchMode, offline);
+      };
+      render();
+    });
+  }
+
+  // ---------- Bulletin board (grades 6-12 self-paced A/B scheduling) ----------
+  /** Shown right after the morning broadcast for grades 6-12: pick a broad AM/Lunch/Evening
+   *  window for each due subject and lock in at least half of them (more is fine — "get ahead"). */
+  bulletinBoard(plan: DailyPlan): Promise<DailyPlan> {
+    return new Promise((resolve) => {
+      const { p, close } = this.modal();
+      const need = minRequired(plan.due);
+      const rows: Record<Subject, { picked: boolean; bucket: Bucket }> = {} as any;
+      plan.due.forEach((s) => { rows[s] = { picked: plan.isTestDay, bucket: 'am' }; });
+
+      const render = () => {
+        const count = Object.values(rows).filter((r) => r.picked).length;
+        p.innerHTML = `<div class="msg-title">📌 Bulletin Board</div>
+          <h2>${plan.isTestDay ? 'Friday Tests — All Classes' : `Today's Classes (${plan.dayType}-Day)`}</h2>
+          <p>${plan.isTestDay
+            ? 'Every class has a unit test today. Early dismissal once you\'ve finished them all.'
+            : `Pick when you'll go to each class — at least <b>${need} of ${plan.due.length}</b>. Get ahead by picking more!`}</p>`;
+        const list = el('div', 'msg-grid');
+        list.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin:10px 0;';
+        plan.due.forEach((s) => {
+          const row = el('div');
+          row.style.cssText = 'display:flex;align-items:center;gap:8px;background:rgba(0,0,0,.04);border-radius:10px;padding:8px 10px;';
+          const chk = el('button', 'msg-btn' + (rows[s].picked ? ' go' : ''), rows[s].picked ? '✅' : '⬜') as HTMLButtonElement;
+          chk.style.cssText = 'flex:0 0 auto;min-width:34px;';
+          const label = el('div', '', `${SUBJECTS[s].name}`);
+          label.style.cssText = 'flex:1;font-weight:700;';
+          const buckets = el('div');
+          buckets.style.cssText = 'display:flex;gap:4px;';
+          (['am', 'lunch', 'evening'] as Bucket[]).forEach((b) => {
+            const bb = el('button', 'msg-btn' + (rows[s].bucket === b ? ' go' : ''), b === 'am' ? '🌅' : b === 'lunch' ? '🥪' : '🌆') as HTMLButtonElement;
+            bb.disabled = plan.isTestDay ? false : !rows[s].picked;
+            bb.onclick = () => { rows[s].bucket = b; Sfx.blip(); render(); };
+            buckets.appendChild(bb);
+          });
+          if (!plan.isTestDay) {
+            chk.onclick = () => { rows[s].picked = !rows[s].picked; Sfx.blip(); render(); };
+          } else chk.disabled = true;
+          row.append(chk, label, buckets);
+          list.appendChild(row);
+        });
+        p.appendChild(list);
+        const go = el('button', 'msg-btn go', plan.isTestDay ? '▶ Lock in test times' : `▶ Confirm (${count}/${plan.due.length} picked)`) as HTMLButtonElement;
+        go.style.width = '100%';
+        go.disabled = !plan.isTestDay && count < need;
+        go.onclick = () => {
+          plan.selected = plan.isTestDay ? [...plan.due] : plan.due.filter((s) => rows[s].picked);
+          plan.bucket = Object.fromEntries(plan.due.map((s) => [s, rows[s].bucket])) as any;
+          plan.locked = true;
+          Sfx.good(); close(); resolve(plan);
+        };
+        p.appendChild(go);
+      };
+      render();
+    });
+  }
+
+  // ---------- Homework planner ----------
+  homeworkPanel(items: { subject: Subject; item: HomeworkItem }[], onDone: (subject: Subject) => void): Promise<void> {
+    return this.panel((p, close) => {
+      p.innerHTML = `<div class="msg-title">📓 Homework</div><h2>Planner</h2>`;
+      if (!items.length) p.innerHTML += '<p>Nothing due right now — nice work staying caught up!</p>';
+      items.forEach(({ subject, item }) => {
+        const row = el('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;background:rgba(0,0,0,.04);border-radius:10px;padding:8px 10px;margin:6px 0;';
+        const label = el('div', '', `${SUBJECTS[subject].name} <span style="opacity:.6">— assigned day ${item.assignedDay}</span>`);
+        label.style.cssText = 'flex:1;';
+        const btn = el('button', 'msg-btn' + (item.done ? '' : ' go'), item.done ? '✅ Done' : 'Mark done') as HTMLButtonElement;
+        btn.disabled = item.done;
+        btn.onclick = () => { onDone(subject); Sfx.good(); close(); };
+        row.append(label, btn);
+        p.appendChild(row);
+      });
+      const b = el('button', 'msg-btn alt', 'Close') as HTMLButtonElement;
+      b.style.width = '100%'; b.style.marginTop = '10px';
+      b.onclick = () => close();
+      p.appendChild(b);
+    });
+  }
+
   // ---------- Character creator ----------
-  creator(existing: { name: string; look: Look; day: number } | null): Promise<{ name: string; look: Look; fresh: boolean }> {
+  creator(existing: { name: string; look: Look; day: number; schoolGrade?: Grade } | null): Promise<{ name: string; look: Look; schoolGrade: Grade; fresh: boolean }> {
     return new Promise((resolve) => {
       const { p, close } = this.modal();
       let look: Look = existing?.look ?? randomLook(Math.floor(Math.random() * 9999), { outfit: 'tee' });
       let name = existing?.name ?? 'Alex';
+      let grade: Grade = existing?.schoolGrade ?? 5;
       if (existing) {
         p.innerHTML = `<div class="msg-title">Maple Grove</div><h2>School Life</h2><p>Welcome back, <b>${existing.name}</b>! Ready for day ${existing.day}?</p>`;
         const prev = this.previewCanvas(look);
@@ -243,7 +429,7 @@ export class Hud {
         const fresh = el('button', 'msg-btn alt', 'New student') as HTMLButtonElement;
         go.style.width = fresh.style.width = '100%'; fresh.style.marginTop = '8px'; fresh.style.textAlign = 'center';
         p.append(go, fresh);
-        go.onclick = () => { Sfx.unlock(); Sfx.good(); prev.stop(); close(); resolve({ name: existing.name, look, fresh: false }); };
+        go.onclick = () => { Sfx.unlock(); Sfx.good(); prev.stop(); close(); resolve({ name: existing.name, look, schoolGrade: grade, fresh: false }); };
         fresh.onclick = () => { prev.stop(); close(); this.creator(null).then(resolve); };
         return;
       }
@@ -287,13 +473,17 @@ export class Hud {
       const render = () => {
         right.innerHTML = '';
         right.append(
+          el('h3', '', '🧑 Personal Avatar'),
           swatchRow('Skin', 'skin', SKIN_TONES),
+          swatchRow('Eyes', 'eyeColor', EYE_COLORS),
           pillRow('Hair', 'hairStyle', HAIR_STYLES),
           swatchRow('Hair color', 'hair', HAIR_COLORS),
           pillRow('Outfit', 'outfit', OUTFITS),
           swatchRow('Top', 'shirt', SHIRT_COLORS),
           swatchRow('Bottoms', 'pants', PANTS_COLORS),
+          swatchRow('Shoes', 'shoes', SHOE_COLORS),
           swatchRow('Backpack', 'backpack', ['#e2544a', '#4f86d9', '#f2c94c', '#6cbf6a', '#8b6fd1', '#e874a8', '#f29b3b']),
+          pillRow('Accessory', 'accessory', ACCESSORIES),
         );
         const g = el('div', 'msg-row');
         g.appendChild(el('label', '', 'Glasses'));
@@ -303,6 +493,17 @@ export class Hud {
           g.appendChild(b);
         }
         right.appendChild(g);
+        right.append(el('h3', '', '🎓 Grade Level'));
+        const gr = el('div', 'msg-row');
+        gr.style.flexWrap = 'wrap';
+        gr.appendChild(el('label', '', 'Grade'));
+        for (const gv of GRADES) {
+          const b = el('button', 'msg-pill' + (grade === gv ? ' sel' : ''), String(gv)) as HTMLButtonElement;
+          b.onclick = () => { grade = gv; Sfx.blip(); render(); };
+          gr.appendChild(b);
+        }
+        right.appendChild(gr);
+        right.appendChild(el('p', 'msg-help', 'Your grade sets the lessons, textbooks and tests you see — you can still sit with players of other grades.'));
       };
       rnd.onclick = () => { look = randomLook(Math.floor(Math.random() * 99999)); Sfx.blip(); refresh(); };
       render();
@@ -310,7 +511,7 @@ export class Hud {
       p.appendChild(wrap);
       const go = el('button', 'msg-btn go', '🏫 Start school!') as HTMLButtonElement;
       go.style.width = '100%'; go.style.marginTop = '10px';
-      go.onclick = () => { Sfx.unlock(); Sfx.good(); prev.stop(); close(); resolve({ name: (name || 'Alex').trim().slice(0, 12), look, fresh: true }); };
+      go.onclick = () => { Sfx.unlock(); Sfx.good(); prev.stop(); close(); resolve({ name: (name || 'Alex').trim().slice(0, 12), look, schoolGrade: grade, fresh: true }); };
       p.appendChild(go);
       p.appendChild(el('p', 'msg-help', 'Move: arrow keys / WASD or the D-pad · Interact: E / Space or the A button · Tap anywhere to walk there.'));
     });
@@ -318,20 +519,20 @@ export class Hud {
 
   private previewCanvas(initial: Look) {
     const canvas = document.createElement('canvas');
-    canvas.width = 16; canvas.height = 24;
+    canvas.width = FRAME_W; canvas.height = FRAME_H;
     const ctx = canvas.getContext('2d')!;
     let sheet = buildCharacterSheet(initial);
     let f = 0;
-    const order = [0, 4, 12, 8];
+    const rows = [0, 1, 3, 2];
     const draw = () => {
-      ctx.clearRect(0, 0, 16, 24);
-      const dirRow = order[Math.floor(f / 8) % 4] / 4;
-      const col = [1, 0, 2, 0][f % 4];
-      ctx.drawImage(sheet, col * 16, dirRow * 24, 16, 24, 0, 0, 16, 24);
+      ctx.clearRect(0, 0, FRAME_W, FRAME_H);
+      const row = rows[Math.floor(f / 12) % 4];
+      const col = 1 + (f % 4);
+      ctx.drawImage(sheet, col * FRAME_W, row * FRAME_H, FRAME_W, FRAME_H, 0, 0, FRAME_W, FRAME_H);
       f++;
     };
     draw();
-    const iv = setInterval(draw, 180);
+    const iv = setInterval(draw, 130);
     const stop = () => { this.cleanups.delete(stop); clearInterval(iv); };
     this.cleanups.add(stop);
     return { canvas, set: (l: Look) => { sheet = buildCharacterSheet(l); draw(); }, stop };
@@ -341,6 +542,7 @@ export class Hud {
   piano(): Promise<number> {
     return new Promise((resolve) => {
       let notes = 0;
+      let offKey: () => void = () => {};
       this.panel((p, close) => {
         p.innerHTML = '<h2>🎹 Piano</h2><p>Tap the keys (or press 1–8). Play a little tune!</p>';
         const keys = el('div', 'msg-keys');
@@ -353,12 +555,12 @@ export class Hud {
         });
         const play = (i: number) => { Sfx.piano(i); notes++; btns[i].classList.add('on'); setTimeout(() => btns[i].classList.remove('on'), 150); };
         const key = (e: KeyboardEvent) => { const n = parseInt(e.key, 10); if (n >= 1 && n <= 8) play(n - 1); };
-        const offKey = this.onWindowKey(key);
+        offKey = this.onWindowKey(key);
         const done = el('button', 'msg-btn go', 'Done') as HTMLButtonElement;
         done.style.width = '100%';
-        done.onclick = () => { offKey(); close(); resolve(notes); };
+        done.onclick = close;
         p.append(keys, done);
-      });
+      }).then(() => { offKey(); resolve(notes); }); // also settles on Escape
     });
   }
 
@@ -406,6 +608,8 @@ export class Hud {
   hoops(skill: number): Promise<number> {
     return new Promise((resolve) => {
       let made = 0, shots = 0;
+      let offKey: () => void = () => {};
+      let stopRaf: () => void = () => {};
       this.panel((p, close) => {
         p.innerHTML = '<h2>🏀 Free throws</h2><p>Tap SHOOT when the marker is in the green zone. 5 shots!</p>';
         const bar = el('div', 'msg-bar');
@@ -420,7 +624,7 @@ export class Hud {
         let t = 0, raf = 0, dirv = 1, pos = 0;
         const loop = () => { t++; pos += dirv * (1.4 + shots * 0.25); if (pos > 100) { pos = 100; dirv = -1; } if (pos < 0) { pos = 0; dirv = 1; } cur.style.left = `calc(${pos}% - 3px)`; raf = requestAnimationFrame(loop); };
         raf = requestAnimationFrame(loop);
-        const stopRaf = () => { this.cleanups.delete(stopRaf); cancelAnimationFrame(raf); };
+        stopRaf = () => { this.cleanups.delete(stopRaf); cancelAnimationFrame(raf); };
         this.cleanups.add(stopRaf);
         const fire = () => {
           if (shots >= 5) return;
@@ -431,14 +635,14 @@ export class Hud {
           if (shots >= 5) {
             stopRaf();
             shoot.textContent = 'Done';
-            shoot.onclick = () => { offKey(); close(); resolve(made); };
+            shoot.onclick = close;
           }
         };
         const key = (e: KeyboardEvent) => { if (e.key === ' ' || e.key === 'Enter' || e.key === 'e') { e.preventDefault(); if (shots < 5) fire(); } };
-        const offKey = this.onWindowKey(key);
+        offKey = this.onWindowKey(key);
         shoot.onclick = fire;
         p.append(bar, score, shoot);
-      });
+      }).then(() => { stopRaf(); offKey(); resolve(made); }); // also settles on Escape
     });
   }
 
