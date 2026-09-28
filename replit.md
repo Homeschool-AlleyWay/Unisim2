@@ -50,6 +50,10 @@ A top-down pixel-art school simulator (Phaser 3 + React): follow the bell schedu
 
 - User supplies code snippets/files with little or no prose; treat them as "apply this to the app". No emojis in UI.
 
+## Integrations
+- **GitHub**: connected via the Replit GitHub connector (use `connectors.proxy("github", ...)` from `@replit/connectors-sdk` in server code).
+- **Claude (Anthropic)**: Replit AI Integrations proxy — env vars `AI_INTEGRATIONS_ANTHROPIC_BASE_URL` / `AI_INTEGRATIONS_ANTHROPIC_API_KEY` are auto-provisioned (never edit them). Client lives in `lib/integrations-anthropic-ai` (`import { anthropic } from "@workspace/integrations-anthropic-ai"`), already a dependency of `artifacts/api-server`. Supported models: claude-sonnet-5 (default), claude-opus-5, claude-haiku-4-5. No chat routes/DB tables wired yet.
+
 ## Gotchas
 
 - When the user ships a new game zip, replace `src/game/` wholesale, then re-apply the lifecycle fixes (HUD `cleanups`/`destroy()`, `Classroom3D.destroy()`, scene shutdown/destroy hooks) — they are not in the user's source.
