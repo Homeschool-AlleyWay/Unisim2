@@ -50,6 +50,10 @@ A top-down pixel-art school simulator (Phaser 3 + React): follow the bell schedu
 
 - User supplies code snippets/files with little or no prose; treat them as "apply this to the app". No emojis in UI.
 
+## UNIFY Character System (React layer, `/characters`)
+- `src/types/character.ts` types; `src/data/characterAssetManifest.ts` = 8 teacher profiles (Mon–Fri outfits, hairstyles, voice profiles, quotes); `src/services/npcGenerationService.ts` = seeded daily roster (10 students from the UTC date, so all players share it) + teacher-for-day resolution; `src/hooks/useAvatarCustomization.ts` = player avatar in localStorage (`unify.avatar.v1`); `src/context/CharacterSystemContext.tsx` = provider (wraps the app in App.tsx) with `useAllTeachers()`, `useTodayNPCs()`, `useAvatarCustomization()`; `src/components/CharacterDemo.tsx` = demo page (tabs deep-linkable via `?tab=students|avatar`).
+- Portraits reuse the game's sprite painter (`drawCharacterFrame` in `src/game/art/characters.ts`), so any `Look` renders identically in React and in Phaser. Not yet wired into the Phaser game's roster.
+
 ## Integrations
 - **GitHub**: connected via the Replit GitHub connector (use `connectors.proxy("github", ...)` from `@replit/connectors-sdk` in server code).
 - **Claude (Anthropic)**: Replit AI Integrations proxy — env vars `AI_INTEGRATIONS_ANTHROPIC_BASE_URL` / `AI_INTEGRATIONS_ANTHROPIC_API_KEY` are auto-provisioned (never edit them). Client lives in `lib/integrations-anthropic-ai` (`import { anthropic } from "@workspace/integrations-anthropic-ai"`), already a dependency of `artifacts/api-server`. Supported models: claude-sonnet-5 (default), claude-opus-5, claude-haiku-4-5. No chat routes/DB tables wired yet.

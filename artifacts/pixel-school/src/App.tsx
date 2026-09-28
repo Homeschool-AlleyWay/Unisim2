@@ -6,6 +6,8 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
 import Home from '@/pages/Home';
 import Classroom from '@/pages/Classroom';
+import CharacterDemo from '@/components/CharacterDemo';
+import { CharacterSystemProvider } from '@/context/CharacterSystemContext';
 import {
   Route,
   Switch,
@@ -21,6 +23,7 @@ function Router() {
       <Switch>
         <Route path="/" component={Home} />
         <Route path="/classroom" component={Classroom} />
+        <Route path="/characters" component={CharacterDemo} />
         <Route component={NotFound} />
       </Switch>
     </RoutedErrorBoundary>
@@ -36,9 +39,11 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL?.replace(/\/$/, '') || ''}>
-          <Router />
-        </WouterRouter>
+        <CharacterSystemProvider>
+          <WouterRouter base={import.meta.env.BASE_URL?.replace(/\/$/, '') || ''}>
+            <Router />
+          </WouterRouter>
+        </CharacterSystemProvider>
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>

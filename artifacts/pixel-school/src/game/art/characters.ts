@@ -392,6 +392,17 @@ export function buildCharacterSheet(L: Look, scale = 1): HTMLCanvasElement {
   return sheet;
 }
 
+/** Paint one frame (default: standing, facing the viewer) onto a canvas at the given scale. */
+export function drawCharacterFrame(canvas: HTMLCanvasElement, L: Look, scale = 1, dir: 'down' | 'left' | 'up' = 'down', pose: Pose = 'stand') {
+  const c = canvas.getContext('2d')!;
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.clearRect(0, 0, canvas.width, canvas.height);
+  c.scale(scale, scale);
+  c.lineJoin = 'round';
+  drawFrame(c, L, dir, pose);
+  c.setTransform(1, 0, 0, 1, 0, 0);
+}
+
 export function frameIndex(dir: typeof DIRS[number], pose: Pose) {
   return DIRS.indexOf(dir) * SHEET_COLS + POSES.indexOf(pose);
 }
