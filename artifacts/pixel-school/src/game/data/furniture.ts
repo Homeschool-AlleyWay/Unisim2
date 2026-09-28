@@ -133,7 +133,7 @@ export function buildPlacement(): Placement {
   seat(14, 22, 'down', 'hallway', 'bench');
   // Lockers are painted on the hallway wall; these are logic markers in front of them.
   for (let x = 4; x <= 44; x++) {
-    if ([10, 11, 16, 17, 20, 21, 24, 25, 30, 31, 32, 38, 39].includes(x)) continue;
+    if ([10, 11, 16, 17, 20, 21, 24, 25, 26, 27, 28, 29, 30, 31, 32, 38, 39].includes(x)) continue; // doors, boards, hall TV
     obj('marker', x, 18, 1, 1, true, { hidden: true, interact: 'locker', label: `Locker #${x}` });
   }
 

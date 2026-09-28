@@ -338,6 +338,22 @@ function shadows(ctx: Ctx, grid: SchoolGrid) {
 
 export const PLAYER_LOCKER_X = 7;
 
+/** The big wall-mounted TV in the main hallway (tiles). The live broadcast picture is
+ *  drawn over this mount by the scene; only the bezel/bracket is painted here. */
+export const HALL_TV = { tx: 26, ty: 17, w: 4 };
+export const HALL_TV_PX = { x: HALL_TV.tx * TILE + 4, y: HALL_TV.ty * TILE + 4, w: HALL_TV.w * TILE - 8, h: 31 };
+
+function wallTv(ctx: Ctx) {
+  const { x, y, w, h } = HALL_TV_PX;
+  // wall bracket + soft glow on the wall
+  rect(ctx, x + Math.floor(w / 2) - 4, y + h, 8, 2, '#3a3a48');
+  ctx.fillStyle = 'rgba(120,160,255,0.16)'; ctx.fillRect(x - 3, y - 2, w + 6, h + 5);
+  box(ctx, x - 2, y - 2, w + 4, h + 4, '#1d1c26', '#0c0b12');
+  rect(ctx, x - 1, y - 1, w + 2, 1, '#34333f');
+  rect(ctx, x, y, w, h, '#0a0c18');
+  px(ctx, x + w - 3, y + h + 0, '#ff4d4d');
+}
+
 export function renderBackground(grid: SchoolGrid): HTMLCanvasElement {
   const [c, ctx] = makeCanvas(MAP_W * TILE, MAP_H * TILE);
   for (let y = 0; y < MAP_H; y++)
@@ -376,6 +392,7 @@ export function renderBackground(grid: SchoolGrid): HTMLCanvasElement {
     if ([10, 11, 24, 25, 38, 39, 17, 32].includes(x)) continue;
     if (x === 16) { bulletin(ctx, 16, 17, 1); continue; }
     if (x === 30 || x === 31) { if (x === 30) banner(ctx, 30, 17, 2, 'CHAMPS', '#3d6fb0'); continue; }
+    if (x >= HALL_TV.tx && x < HALL_TV.tx + HALL_TV.w) { if (x === HALL_TV.tx) wallTv(ctx); continue; }
     if (x === 20 || x === 21) { if (x === 20) bulletin(ctx, 20, 17, 2); continue; }
     lockers(ctx, x, 17, x, x === PLAYER_LOCKER_X);
   }

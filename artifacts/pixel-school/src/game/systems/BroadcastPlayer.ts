@@ -1,10 +1,14 @@
 // The Morning Broadcast: two student anchors deliver a short mandatory morning-assembly
 // segment (greeting → date → weather → motto & promise → Pledge → Lord's Prayer), then,
-// once the first bell rings, a looping news show. The mandatory segment renders as a
-// blocking full-screen "big TV" overlay; the news loop instead drives a small ticker
-// (shown while the player is physically in the hallway) plus the silent classroom TVs.
-import { buildCharacterSheet, Look } from '../art/characters';
+// once the first bell rings, a looping news show.
+//
+// The show is rendered once per frame by BroadcastScreen into an offscreen canvas (the
+// "signal"). It plays in the world on the big wall TV in the main hallway, in a pocket
+// picture-in-picture panel while the player is in the hallway/lobby (tap to enlarge),
+// and silently on the 3D classroom TVs. Nothing takes over the screen any more.
+import { Look } from '../art/characters';
 import { Sfx } from './Audio';
+import { BroadcastScreen, SCREEN_H, SCREEN_W } from './BroadcastScreen';
 import {
   ANCHORS, ANTHEM_MELODY, LORDS_PRAYER_LINES, PLEDGE_LINES, SCHOOL_MOTTO, SCHOOL_NAME, SCHOOL_PROMISE,
   calendarForDay, getSubmissions, healthFactForDay, historicalFactFor, newsForDay, upcomingHolidays,
@@ -15,6 +19,9 @@ const ANCHOR_LOOKS: Look[] = [
   { skin: '#dda47c', hair: '#2b2024', hairStyle: 'short', shirt: '#4f86d9', pants: '#2d2a33', shoes: '#2d2a33', outfit: 'blazer', glasses: false, eyeColor: '#4a2f22' },
   { skin: '#f1c29e', hair: '#7a4a2a', hairStyle: 'long', shirt: '#e874a8', pants: '#2d2a33', shoes: '#2d2a33', outfit: 'blazer', glasses: false, eyeColor: '#3f7d6e' },
 ];
+
+/** Frames per second the signal is redrawn at while at least one TV is showing it. */
+const SIGNAL_FPS = 15;
 
 export interface BroadcastSlide { icon: string; title: string; body: string; durationSec?: number }
 
@@ -31,93 +38,94 @@ function pickVoice(gender: 'male' | 'female'): SpeechSynthesisVoice | null {
 }
 
 export class BroadcastPlayer {
-  root: HTMLDivElement;
-  private portraitCanvases: HTMLCanvasElement[] = [];
-  private captionEl!: HTMLDivElement;
-  private headlineEl!: HTMLDivElement;
-  private anchorEls: HTMLDivElement[] = [];
+  /** The live picture. Consumers copy from `screen.canvas` (hi-res) or `screen.small` (world TV). */
+  readonly screen = new BroadcastScreen(ANCHOR_LOOKS);
+  /** Fired after every redraw of the signal so in-world textures can refresh. */
+  onFrame: () => void = () => {};
+  /** Latest segment content (visual only). */
+  current: BroadcastSlide = { icon: '📺', title: SCHOOL_NAME, body: 'Good morning!' };
+  onSlide: (s: BroadcastSlide) => void = () => {};
+
+  private pip: HTMLDivElement;
+  private pipCanvas: HTMLCanvasElement;
+  private pipCtx: CanvasRenderingContext2D;
+  private pipLabel: HTMLDivElement;
+  private pipVisible = false;
+  private pipBig = false;
+  /** Set by the scene when the wall TV is on camera or a 3D TV is up, so the signal keeps rendering. */
+  worldViewers = 0;
+  private lastRender = 0;
   private cancelled = false;
-  private ticker!: HTMLDivElement;
-  private tickerIcon!: HTMLSpanElement;
-  private tickerText!: HTMLDivElement;
   private loopTimer: ReturnType<typeof setTimeout> | null = null;
   private loopSlides: BroadcastSlide[] = [];
   private loopIdx = 0;
   private loopInHallway: () => boolean = () => false;
-  /** Latest segment content, mirrored to classroom TVs / hallway ticker (visual only). */
-  current: BroadcastSlide = { icon: '📺', title: SCHOOL_NAME, body: 'Good morning!' };
-  onSlide: (s: BroadcastSlide) => void = () => {};
+  private mandatoryRunning = false;
+  /** News loop requested while the assembly was still on air; started once it ends. */
+  private pendingLoop: { day: number; isInHallway: () => boolean } | null = null;
+  private destroyed = false;
+  private readonly onResize = () => this.layoutPip();
 
   constructor(private parent: HTMLElement) {
-    this.root = el('div', 'bcast-overlay') as HTMLDivElement;
-    this.root.style.cssText = 'position:absolute;inset:0;display:none;z-index:60;background:radial-gradient(circle at 50% 30%,#2a2f45,#0d0e16);align-items:center;justify-content:center;flex-direction:column;padding:16px;box-sizing:border-box;color:#fff8ec;font-family:"Nunito",sans-serif;';
-    const tv = el('div', 'bcast-tv');
-    tv.style.cssText = 'width:min(96vw,520px);border-radius:22px;background:#14121c;padding:14px;box-shadow:0 20px 60px rgba(0,0,0,.5);border:6px solid #21202c;';
-    const screen = el('div');
-    screen.style.cssText = 'background:linear-gradient(180deg,#232847,#12141f);border-radius:12px;padding:16px;min-height:280px;display:flex;flex-direction:column;';
-    this.headlineEl = el('div') as HTMLDivElement;
-    this.headlineEl.style.cssText = 'font-weight:800;font-size:13px;letter-spacing:.04em;color:#ffd166;text-transform:uppercase;margin-bottom:8px;';
-    this.headlineEl.textContent = `📡 ${SCHOOL_NAME} — Morning Broadcast`;
-    const row = el('div');
-    row.style.cssText = 'display:flex;gap:14px;align-items:flex-end;flex:1;';
-    for (let i = 0; i < 2; i++) {
-      const wrap = el('div') as HTMLDivElement;
-      wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:4px;transition:transform .12s ease;';
-      const canvas = document.createElement('canvas');
-      canvas.width = 128; canvas.height = 192;
-      canvas.style.cssText = 'width:76px;image-rendering:pixelated;filter:drop-shadow(0 6px 10px rgba(0,0,0,.4));';
-      const name = el('div', '', ANCHORS[i].name);
-      name.style.cssText = 'font-size:11px;opacity:.75;font-weight:700;';
-      wrap.append(canvas, name);
-      row.appendChild(wrap);
-      this.portraitCanvases.push(canvas);
-      this.anchorEls.push(wrap);
-    }
-    const capWrap = el('div');
-    capWrap.style.cssText = 'flex:2;background:rgba(0,0,0,.25);border-radius:10px;padding:12px 14px;min-height:120px;';
-    this.captionEl = el('div') as HTMLDivElement;
-    this.captionEl.style.cssText = 'font-size:15px;line-height:1.4;font-weight:600;';
-    capWrap.appendChild(this.captionEl);
-    row.appendChild(capWrap);
-    screen.append(this.headlineEl, row);
-    tv.appendChild(screen);
-    this.root.appendChild(tv);
-    this.parent.appendChild(this.root);
-    this.redrawPortraits('stand');
-
-    // Compact hallway ticker — visible only while the player is near the main-hall TV.
-    this.ticker = el('div') as HTMLDivElement;
-    this.ticker.style.cssText = 'position:absolute;left:8px;right:8px;bottom:8px;display:none;z-index:40;background:rgba(18,16,26,.88);border-radius:12px;padding:8px 12px;color:#fff8ec;font-family:"Nunito",sans-serif;align-items:center;gap:10px;pointer-events:none;';
-    this.ticker.style.display = 'none';
-    this.tickerIcon = el('span') as HTMLSpanElement;
-    this.tickerIcon.style.cssText = 'font-size:22px;';
-    this.tickerText = el('div') as HTMLDivElement;
-    this.tickerText.style.cssText = 'flex:1;font-size:12px;line-height:1.3;';
-    const label = el('div', '', '📺 ON AIR');
-    label.style.cssText = 'font-size:9px;font-weight:800;color:#ffd166;letter-spacing:.06em;';
-    const wrap = el('div');
-    wrap.style.cssText = 'display:flex;align-items:center;gap:10px;';
-    wrap.append(this.tickerIcon, this.tickerText);
-    this.ticker.append(label, wrap);
-    this.parent.appendChild(this.ticker);
+    // Pocket TV: small by default, tap to enlarge. Never blocks the game.
+    this.pip = el('div', 'bcast-pip') as HTMLDivElement;
+    this.pip.style.cssText = 'position:absolute;display:none;z-index:40;border-radius:10px;overflow:hidden;background:#05060d;border:3px solid #23222e;box-shadow:0 12px 34px rgba(0,0,0,.55),inset 0 0 0 1px rgba(255,255,255,.06);cursor:pointer;pointer-events:auto;transition:width .18s ease,top .18s ease,right .18s ease,left .18s ease,transform .18s ease;';
+    this.pipCanvas = document.createElement('canvas');
+    this.pipCanvas.width = SCREEN_W; this.pipCanvas.height = SCREEN_H;
+    this.pipCanvas.style.cssText = 'display:block;width:100%;height:auto;';
+    this.pipCtx = this.pipCanvas.getContext('2d')!;
+    this.pipLabel = el('div', '', 'Tap to enlarge') as HTMLDivElement;
+    this.pipLabel.style.cssText = 'position:absolute;left:50%;top:5px;transform:translateX(-50%);padding:2px 8px;border-radius:999px;font:700 8px "Nunito",sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#cfd3e8;background:rgba(0,0,0,.55);white-space:nowrap;pointer-events:none;';
+    this.pip.append(this.pipCanvas, this.pipLabel);
+    this.pip.addEventListener('click', () => { this.pipBig = !this.pipBig; this.layoutPip(); });
+    this.parent.appendChild(this.pip);
+    window.addEventListener('resize', this.onResize);
+    this.layoutPip();
+    this.screen.render(performance.now());
   }
 
-  setTickerVisible(v: boolean) { this.ticker.style.display = v ? 'flex' : 'none'; }
-
-  private redrawPortraits(pose: 'stand' | 'talk') {
-    for (let i = 0; i < 2; i++) {
-      const sheet = buildCharacterSheet(ANCHOR_LOOKS[i], 2);
-      const ctx = this.portraitCanvases[i].getContext('2d')!;
-      ctx.clearRect(0, 0, 128, 192);
-      // 'down' row, 'stand' frame (col 0) — a clean front-facing bust, scaled up.
-      ctx.drawImage(sheet, 0, 0, 128, 192, 0, 0, 128, 192);
+  private layoutPip() {
+    const st = this.pip.style;
+    if (this.pipBig) {
+      st.width = 'min(94vw, 640px)'; st.right = 'auto'; st.left = '50%'; st.top = '10%'; st.transform = 'translateX(-50%)';
+      this.pipLabel.textContent = 'Tap to shrink';
+    } else if (window.innerWidth <= 520) {
+      // Phone layout: the HUD buttons stack down the right edge, so sit just left of them.
+      st.width = '44vw'; st.left = 'auto'; st.right = '56px'; st.top = '62px'; st.transform = 'none';
+      this.pipLabel.textContent = 'Tap to enlarge';
+    } else {
+      st.width = 'min(46vw, 250px)'; st.left = 'auto'; st.right = '10px'; st.top = '96px'; st.transform = 'none';
+      this.pipLabel.textContent = 'Hallway TV · tap to enlarge';
     }
+  }
+
+  /** Show/hide the pocket TV (the scene calls this when the player is in the hallway/lobby). */
+  setViewerVisible(v: boolean) {
+    this.pipVisible = v;
+    this.pip.style.display = v ? 'block' : 'none';
+    if (!v) {
+      this.pipBig = false; this.layoutPip();
+      // Leaving the hall mid-story: stop the news narration (the assembly keeps playing).
+      if (!this.mandatoryRunning) { try { speechSynthesis?.cancel(); } catch { /* no-op */ } }
+    }
+  }
+  /** Kept for callers that used the old ticker API. */
+  setTickerVisible(v: boolean) { this.setViewerVisible(v); }
+
+  setClock(text: string) { this.screen.state.clock = text; }
+
+  /** Call every frame from the scene. Redraws the signal at a modest rate while anyone is watching. */
+  tick(nowMs: number) {
+    if (!this.pipVisible && this.worldViewers <= 0) return;
+    if (nowMs - this.lastRender < 1000 / SIGNAL_FPS) return;
+    this.lastRender = nowMs;
+    this.screen.render(nowMs);
+    if (this.pipVisible) this.pipCtx.drawImage(this.screen.canvas, 0, 0);
+    this.onFrame();
   }
 
   private setSpeaking(idx: number, speaking: boolean) {
-    const wrap = this.anchorEls[idx];
-    wrap.style.transform = speaking ? 'scale(1.06) translateY(-2px)' : 'scale(1) translateY(0)';
-    wrap.style.filter = speaking ? 'brightness(1.15)' : 'brightness(1)';
+    this.screen.state.speaker = speaking ? (idx as 0 | 1) : null;
   }
 
   private speak(idx: number, text: string): Promise<void> {
@@ -143,29 +151,43 @@ export class BroadcastPlayer {
   private showSlide(icon: string, title: string, body: string) {
     this.current = { icon, title, body };
     this.onSlide(this.current);
-    this.headlineEl.textContent = `${icon} ${title}`;
-    this.tickerIcon.textContent = icon;
-    this.tickerText.textContent = `${title} — ${body}`;
+    const st = this.screen.state;
+    st.icon = icon; st.title = title; st.body = body; st.caption = '';
   }
 
+  private setCaption(text: string) { this.screen.state.caption = text; }
+
   private async say(idx: 0 | 1, text: string, caption?: string) {
-    this.captionEl.textContent = caption ?? text;
+    this.setCaption(caption ?? text);
     await this.speak(idx, text);
     if (this.cancelled) return;
     await this.wait(180);
   }
 
-  open() { this.root.style.display = 'flex'; }
-  close() { this.root.style.display = 'none'; }
   cancel() { this.cancelled = true; try { speechSynthesis?.cancel(); } catch { /* no-op */ } }
 
-  /** The blocking morning-assembly segment. Resolves once it's fully played. */
+  /** The morning-assembly segment. Resolves once it's fully played. Plays on the TVs;
+   *  the caller decides what (if anything) is gated on it finishing. */
   async playMandatory(playerName: string, now = new Date()): Promise<void> {
     this.cancelled = false;
-    this.open();
-    Sfx.startHallwayAmbience();
+    this.mandatoryRunning = true;
+    try { await this.runMandatory(playerName, now); }
+    finally {
+      this.mandatoryRunning = false;
+      if (!this.destroyed && this.pendingLoop) { const p = this.pendingLoop; this.pendingLoop = null; this.startNewsLoop(p.day, p.isInHallway); }
+    }
+  }
+
+  private async runMandatory(playerName: string, now: Date): Promise<void> {
+    const st = this.screen.state;
+    st.mode = 'live';
     const w = weatherForDate(now);
     const dateStr = now.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    st.ticker = [
+      `Good morning, ${playerName}!`, dateStr, `Weather: ${w.label}, high ${w.hi}° / low ${w.lo}°`,
+      SCHOOL_MOTTO, 'Classes begin after the morning broadcast',
+    ];
+    Sfx.startHallwayAmbience();
 
     this.showSlide('📣', 'Good Morning!', `Good morning, ${SCHOOL_NAME}!`);
     await this.say(0, `Good morning, students and faculty of ${SCHOOL_NAME}!`);
@@ -186,7 +208,7 @@ export class BroadcastPlayer {
     await this.say(0, 'Please stand for the Pledge of Allegiance.');
     const anthemSec = Sfx.playMelody(ANTHEM_MELODY, 96, 0.05);
     for (const line of PLEDGE_LINES) {
-      this.captionEl.textContent = line;
+      this.setCaption(line);
       await this.speak(0, line);
       if (this.cancelled) break;
     }
@@ -194,7 +216,7 @@ export class BroadcastPlayer {
 
     this.showSlide('🙏', "The Lord's Prayer", 'Please bow your heads.');
     for (const line of LORDS_PRAYER_LINES) {
-      this.captionEl.textContent = line;
+      this.setCaption(line);
       await this.speak(1, line);
       if (this.cancelled) break;
     }
@@ -202,7 +224,8 @@ export class BroadcastPlayer {
     this.showSlide('🔔', 'Classes Starting Soon', 'Grab your backpack and 2-way from your locker, then head to class!');
     await this.say(0, `That's it for now — classes are starting soon! Grab your backpack and your 2-way from your locker, then head on to class.`);
     Sfx.stopHallwayAmbience();
-    this.close();
+    // Stay on air with the closing slide until the news loop takes over after the bell.
+    this.setCaption('Grab your backpack and 2-way from your locker, then head to class!');
   }
 
   /** One pass of the after-bell news loop. Non-blocking content only — the caller decides
@@ -235,10 +258,13 @@ export class BroadcastPlayer {
    *  narration only actually plays while `isInHallway()` is true when that slide begins, so
    *  the classroom TVs stay in visual sync without leaking hallway audio into class. */
   startNewsLoop(day: number, isInHallway: () => boolean) {
+    if (this.mandatoryRunning) { this.pendingLoop = { day, isInHallway }; return; } // don't talk over the assembly
     this.stopNewsLoop();
     this.loopInHallway = isInHallway;
     this.loopSlides = this.buildLoopSlides(day);
     this.loopIdx = 0;
+    this.screen.state.mode = 'live';
+    this.screen.state.ticker = this.loopSlides.slice(0, 8).map((s) => s.title);
     this.stepLoop();
   }
 
@@ -246,6 +272,7 @@ export class BroadcastPlayer {
     if (!this.loopSlides.length) return;
     const s = this.loopSlides[this.loopIdx % this.loopSlides.length];
     this.showSlide(s.icon, s.title, s.body);
+    this.setCaption(s.body);
     if (this.loopInHallway()) {
       Sfx.startHallwayAmbience();
       this.speak((this.loopIdx % 2) as 0 | 1, `${s.title}. ${s.body}`);
@@ -262,5 +289,11 @@ export class BroadcastPlayer {
     Sfx.stopHallwayAmbience();
   }
 
-  destroy() { this.cancel(); this.stopNewsLoop(); Sfx.stopHallwayAmbience(); this.root.remove(); this.ticker.remove(); }
+  destroy() {
+    this.destroyed = true;
+    this.pendingLoop = null;
+    this.cancel(); this.stopNewsLoop(); Sfx.stopHallwayAmbience();
+    window.removeEventListener('resize', this.onResize);
+    this.pip.remove();
+  }
 }

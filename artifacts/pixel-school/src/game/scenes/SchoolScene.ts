@@ -1,6 +1,6 @@
 // The main world scene: builds the school, runs the clock, player, NPCs and interactions.
 import Phaser from 'phaser';
-import { renderBackground, PLAYER_LOCKER_X } from '../art/tiles';
+import { renderBackground, PLAYER_LOCKER_X, HALL_TV_PX } from '../art/tiles';
 import { buildFurnitureTextures } from '../art/furniture';
 import { buildCharacterSheet, FRAME_H, FRAME_W, Look, SHEET_COLS, SHEET_ROWS } from '../art/characters';
 import { DPR } from '../display';
@@ -65,6 +65,7 @@ export class SchoolScene extends Phaser.Scene {
   charSheets: Record<string, HTMLCanvasElement> = {};
   bgCanvas!: HTMLCanvasElement;
   propCanvases: Record<string, HTMLCanvasElement> = {};
+  hallTv!: Phaser.GameObjects.Image;
   class3d: Classroom3D | null = null;
   prefer2D = false; // while seated: player asked to leave first-person and see the map instead
   standView3D = false; // while standing: player asked to look around in first-person
@@ -190,7 +191,15 @@ export class SchoolScene extends Phaser.Scene {
     // --- HUD
     this.hud = new Hud(this.game.canvas.parentElement as HTMLElement);
     this.broadcast = new BroadcastPlayer(this.game.canvas.parentElement as HTMLElement);
-    this.broadcast.onSlide = (s) => this.class3d?.setTV(s.icon, s.title, s.body);
+    // Big wall TV in the main hallway shows the live picture.
+    if (this.textures.exists('bcastScreen')) this.textures.remove('bcastScreen');
+    const tvTex = this.textures.addCanvas('bcastScreen', this.broadcast.screen.small)!;
+    tvTex.setFilter(Phaser.Textures.FilterMode.LINEAR);
+    this.hallTv = this.add.image(HALL_TV_PX.x, HALL_TV_PX.y, 'bcastScreen').setOrigin(0, 0).setDisplaySize(HALL_TV_PX.w, HALL_TV_PX.h).setDepth(1);
+    this.broadcast.onFrame = () => {
+      tvTex.refresh();
+      if (this.class3d?.active) this.class3d.setTVFrame(this.broadcast.screen.canvas);
+    };
     this.hud.onAction = () => { if (this.running && !this.hud.modalOpen) this.action(); };
     this.hud.onMap = () => this.openMap();
     this.hud.onZoomIn = () => this.adjustZoom(1.2);
@@ -226,8 +235,11 @@ export class SchoolScene extends Phaser.Scene {
       });
     };
     this.hud.setVisible(false);
-    this.events.once('shutdown', () => this.hud.destroy());
-    this.events.once('destroy', () => { this.hud.destroy(); this.net?.destroy(); this.broadcast.destroy(); this.class3d?.destroy(); this.class3d = null; });
+    // DOM/audio/3D resources live outside Phaser's display list, so tear them down on both
+    // shutdown and destroy (each step is idempotent).
+    const teardown = () => { this.hud.destroy(); this.net?.destroy(); this.broadcast.destroy(); this.class3d?.destroy(); this.class3d = null; };
+    this.events.once('shutdown', teardown);
+    this.events.once('destroy', teardown);
 
     // Player placeholder until the creator finishes
     this.player = new Character(this, 'char_' + this.people[0].id, 41 * TILE + 8, 49 * TILE + 13);
@@ -406,6 +418,11 @@ export class SchoolScene extends Phaser.Scene {
   // ---------------- Update loop ----------------
   update(_t: number, deltaMs: number) {
     const dt = Math.min(0.05, deltaMs / 1000);
+    // Keep the broadcast picture moving while any TV is actually on screen.
+    const view = this.cameras.main.worldView;
+    const tvOnCamera = !this.class3d?.active && view.right > HALL_TV_PX.x && view.left < HALL_TV_PX.x + HALL_TV_PX.w && view.bottom > HALL_TV_PX.y && view.top < HALL_TV_PX.y + HALL_TV_PX.h;
+    this.broadcast.worldViewers = (tvOnCamera ? 1 : 0) + (this.class3d?.active && this.class3d.hasTV ? 1 : 0);
+    this.broadcast.tick(_t);
     const paused = !this.running || this.hud.modalOpen > 0;
     const scale = this.fastForward ? 10 : this.userSpeed;
     this.world.timeScale = paused ? 0 : scale;
@@ -694,7 +711,7 @@ export class SchoolScene extends Phaser.Scene {
     if (rid && rid !== this.currentRoom) {
       this.currentRoom = rid;
       this.hud.roomBanner(room ? room.name : 'Front Courtyard');
-      this.broadcast.setTickerVisible(rid === 'hallway' || rid === 'lobby');
+      this.broadcast.setViewerVisible(rid === 'hallway' || rid === 'lobby');
       if ((rid === 'hallway' || rid === 'lobby') && !this.broadcastStarted) {
         this.broadcastStarted = true;
         this.broadcast.playMandatory(this.save.name).then(async () => {
@@ -1186,6 +1203,7 @@ export class SchoolScene extends Phaser.Scene {
     let pname = per.name;
     if (per.kind === 'class') pname += ' · ' + SUBJECTS[this.playerSubject(per.slot!)].name;
     this.hud.setClock(`${dayName} · Day ${this.save.day}`, fmtTime(this.minute), pname);
+    this.broadcast.setClock(fmtTime(this.minute));
     this.hud.setStats(this.save.energy, this.save.stats);
   }
 

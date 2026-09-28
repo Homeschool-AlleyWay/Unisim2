@@ -175,6 +175,7 @@ export class Classroom3D {
     this.roomGroup.clear();
     this.cards = [];
     this.board = undefined;
+    this.tv = undefined;
   }
 
   private isShared(t: THREE.Texture) {
@@ -547,6 +548,22 @@ export class Classroom3D {
   }
 
   // ---------------- mounted classroom TV (silent — broadcast loop or visual aids) ----------------
+  /** Whether a classroom TV exists right now (so the broadcast keeps rendering for it). */
+  get hasTV() { return !!this.tv; }
+
+  /** Show the live broadcast picture (letterboxed) on the classroom TV. */
+  setTVFrame(src: HTMLCanvasElement) {
+    if (!this.tv) return;
+    const { canvas, tex } = this.tv;
+    const c = canvas.getContext('2d')!;
+    const W = canvas.width, H = canvas.height;
+    const h = Math.round((W * src.height) / src.width);
+    c.fillStyle = '#000'; c.fillRect(0, 0, W, H);
+    c.imageSmoothingEnabled = true;
+    c.drawImage(src, 0, Math.round((H - h) / 2), W, h);
+    tex.needsUpdate = true;
+  }
+
   setTV(icon: string, title: string, body: string) {
     if (!this.tv) return;
     const { canvas, tex } = this.tv;
