@@ -61,6 +61,7 @@ A top-down pixel-art school simulator (Phaser 3 + React): follow the bell schedu
 ## Gotchas
 
 - When the user ships a new game zip, replace `src/game/` wholesale, then re-apply the lifecycle fixes (HUD `cleanups`/`destroy()`, `Classroom3D.destroy()`, scene shutdown/destroy hooks) — they are not in the user's source.
+- Partial bundles (e.g. Phase 2 parent oversight) ship an older `SchoolScene.ts` without the local broadcast-TV wiring (`HALL_TV_PX` hall TV texture, `broadcast.onFrame/tick/worldViewers/setViewerVisible/setClock`); re-apply that too. New window/document listeners and the `ParentDashboard` go in the scene's `teardown`; async callbacks check `tornDown` before touching the HUD.
 - Pin `phaser@^3`; a bare `pnpm add phaser` resolves to Phaser 4.
 - Multiplayer/auth talks to the user's own Supabase project directly from the browser; there is no server component in this repo.
 

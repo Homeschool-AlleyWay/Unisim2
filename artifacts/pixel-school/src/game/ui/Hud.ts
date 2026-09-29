@@ -334,6 +334,34 @@ export class Hud {
     });
   }
 
+  /** New accounts pick which side of the family they're on. */
+  chooseRole(): Promise<'student' | 'parent'> {
+    return new Promise((resolve) => {
+      const { p, close } = this.modal();
+      p.innerHTML = `<div class="msg-title">Maple Grove</div><h2>Who's signing in?</h2>
+        <p>A parent account sees live activity and daily reports — no character or classes.</p>`;
+      const studentBtn = el('button', 'msg-btn go', "🎒 I'm the student") as HTMLButtonElement;
+      studentBtn.style.width = '100%';
+      studentBtn.onclick = () => { close(); resolve('student'); };
+      const parentBtn = el('button', 'msg-btn alt', "👪 I'm a parent") as HTMLButtonElement;
+      parentBtn.style.width = '100%'; parentBtn.style.marginTop = '8px';
+      parentBtn.onclick = () => { close(); resolve('parent'); };
+      p.append(studentBtn, parentBtn);
+    });
+  }
+
+  /** Shows a student's family code (Menu → Family Code) so a parent can link to them. */
+  familyCodePanel(code: string): Promise<void> {
+    return this.panel((p, close) => {
+      p.innerHTML = `<div class="msg-title">👪 Family Code</div><h2 style="letter-spacing:.15em;font-size:32px;">${code}</h2>
+        <p>Give this code to a parent — they enter it once on their own account to see your daily reports and live status.</p>`;
+      const b = el('button', 'msg-btn go', 'Close') as HTMLButtonElement;
+      b.style.width = '100%'; b.style.marginTop = '10px';
+      b.onclick = () => close();
+      p.appendChild(b);
+    });
+  }
+
   // ---------- Bulletin board (grades 6-12 self-paced A/B scheduling) ----------
   /** Shown right after the morning broadcast for grades 6-12: pick a broad AM/Lunch/Evening
    *  window for each due subject and lock in at least half of them (more is fine — "get ahead"). */
