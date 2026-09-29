@@ -537,7 +537,7 @@ export class SchoolScene extends Phaser.Scene {
     if (this.net) {
       this.netBroadcastTimer -= dt;
       if (this.netBroadcastTimer <= 0) {
-        this.netBroadcastTimer = 0.35;
+        this.netBroadcastTimer = 0.35; // cheap local merge; Presence throttles the actual sends
         this.net.update({ x: this.player.x, y: this.player.y, room: this.currentRoom, dir: this.player.dir, pose: this.player.pose, seatId: this.player.seat?.id ?? null });
       }
     }

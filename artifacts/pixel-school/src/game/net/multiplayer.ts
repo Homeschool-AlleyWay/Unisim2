@@ -131,17 +131,47 @@ export async function recordAssessment(userId: string, lessonId: string, kind: '
  * grade's lesson content — presence only carries position/look/room, never
  * lesson content, so nobody's board is changed by anyone else being nearby.
  */
+/** Supabase Realtime allows only 5 presence calls per client per 30 s (all plans). A client that
+ *  exceeds it gets "Client presence rate limit exceeded" and is dropped from presence, so the parent
+ *  dashboard shows the student offline. Presence therefore carries only slow-changing state (online,
+ *  room, seat) and is sent at most every 8 s (≤4 per 30 s, leaving room for a rejoin). */
+const PRESENCE_MIN_INTERVAL_MS = 8000;
+/** Walking positions go over broadcast messages instead (separate, much higher limits), at most 1/s and only while moving. */
+const POSITION_MIN_INTERVAL_MS = 1000;
+type PositionMsg = Pick<PresenceState, 'id' | 'x' | 'y' | 'dir' | 'pose' | 'seatId' | 'room'>;
+/** Movement smaller than this (world px, 2 tiles) is not worth a presence update on its own. */
+const PRESENCE_MOVE_PX = 32;
+
 export class Presence {
   private channel;
   private me: PresenceState;
+  /** Last state actually sent with track(); null until the first send after subscribing. */
+  private sent: PresenceState | null = null;
+  private lastSendAt = 0;
+  private subscribed = false;
+  private trailing: ReturnType<typeof setTimeout> | null = null;
+  private failures = 0;
+  private destroyed = false;
+  /** Latest broadcast position per remote player; overrides their (slower) presence position. */
+  private positions = new Map<string, PositionMsg>();
+  private lastPos: PositionMsg | null = null;
+  private lastPosAt = 0;
   onUpdate: (others: PresenceState[]) => void = () => {};
 
   constructor(me: PresenceState) {
-    this.me = me;
+    this.me = { ...me };
     this.channel = getSupabase().channel('maple-grove-school', { config: { presence: { key: me.id } } });
     this.channel.on('presence', { event: 'sync' }, () => this.emit());
+    this.channel.on('broadcast', { event: 'pos' }, ({ payload }) => {
+      const m = payload as PositionMsg;
+      if (!m || typeof m.id !== 'string' || m.id === this.me.id) return;
+      this.positions.set(m.id, m);
+      this.emit();
+    });
     this.channel.subscribe((status) => {
-      if (status === 'SUBSCRIBED') this.channel.track(this.me);
+      // Also fires again after an automatic rejoin — re-announce ourselves then.
+      this.subscribed = status === 'SUBSCRIBED';
+      if (this.subscribed) { this.sent = null; this.flush(); }
     });
   }
 
@@ -151,18 +181,76 @@ export class Presence {
     for (const key of Object.keys(state)) {
       if (key === this.me.id) continue;
       const entries = state[key];
-      if (entries && entries[0]) others.push(entries[0]);
+      if (entries && entries[0]) {
+        const pos = this.positions.get(key);
+        others.push(pos ? { ...entries[0], ...pos } : entries[0]);
+      }
     }
+    for (const id of this.positions.keys()) if (!state[id]) this.positions.delete(id); // left the school
     this.onUpdate(others);
   }
 
-  /** Call at most a few times a second — Realtime presence is not meant for 60fps updates. */
+  /** Room, seat, sitting and walking a couple of tiles count; walk-cycle frames and facing do not. */
+  private meaningfulChange(): boolean {
+    const a = this.sent, b = this.me;
+    if (!a) return true;
+    if (a.room !== b.room || a.seatId !== b.seatId || (a.pose === 'sit') !== (b.pose === 'sit')) return true;
+    if (a.username !== b.username || a.grade !== b.grade) return true;
+    return Math.hypot(a.x - b.x, a.y - b.y) >= PRESENCE_MOVE_PX;
+  }
+
+  private flush() {
+    if (this.destroyed || !this.subscribed || !this.meaningfulChange()) return;
+    const wait = this.lastSendAt + PRESENCE_MIN_INTERVAL_MS - Date.now();
+    if (wait > 0) {
+      // Too soon — send the latest state once the interval is up (one pending send at most).
+      if (!this.trailing) this.trailing = setTimeout(() => { this.trailing = null; this.flush(); }, wait);
+      return;
+    }
+    this.lastSendAt = Date.now();
+    const sending = { ...this.me };
+    this.sent = sending;
+    const failed = (why: unknown) => {
+      if (this.destroyed) return;
+      console.warn('[presence] track() failed:', why);
+      // Not acknowledged: forget it so the next flush re-sends, and retry with backoff
+      // (a stationary student would otherwise never trigger another send and stay offline).
+      if (this.sent === sending) this.sent = null;
+      this.failures++;
+      const delay = Math.min(30000, PRESENCE_MIN_INTERVAL_MS * 2 ** Math.min(this.failures, 4));
+      this.lastSendAt = Date.now() + delay - PRESENCE_MIN_INTERVAL_MS;
+      if (this.trailing) clearTimeout(this.trailing);
+      this.trailing = setTimeout(() => { this.trailing = null; this.flush(); }, delay);
+    };
+    this.channel.track(sending).then((res) => {
+      if (res === 'ok') this.failures = 0;
+      else failed(res);
+    }).catch(failed);
+  }
+
+  /** Position for other players' avatars: broadcast at most once a second, only when it changed. */
+  private sendPosition() {
+    if (this.destroyed || !this.subscribed || Date.now() - this.lastPosAt < POSITION_MIN_INTERVAL_MS) return;
+    const m = this.me;
+    const pos: PositionMsg = { id: m.id, x: Math.round(m.x), y: Math.round(m.y), dir: m.dir, pose: m.pose === 'sit' ? 'sit' : 'stand', seatId: m.seatId, room: m.room };
+    const l = this.lastPos;
+    if (l && l.x === pos.x && l.y === pos.y && l.dir === pos.dir && l.pose === pos.pose && l.seatId === pos.seatId && l.room === pos.room) return;
+    this.lastPos = pos;
+    this.lastPosAt = Date.now();
+    this.channel.send({ type: 'broadcast', event: 'pos', payload: pos }).catch(() => {});
+  }
+
+  /** Safe to call often: state is merged locally; presence and position sends are throttled. */
   update(patch: Partial<PresenceState>) {
     Object.assign(this.me, patch);
-    this.channel.track(this.me);
+    this.flush();
+    this.sendPosition();
   }
 
   destroy() {
+    this.destroyed = true;
+    if (this.trailing) clearTimeout(this.trailing);
+    this.trailing = null;
     this.channel.unsubscribe();
   }
 }

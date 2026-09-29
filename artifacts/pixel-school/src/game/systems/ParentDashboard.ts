@@ -97,7 +97,7 @@ export class ParentDashboard {
     if (this.active) this.renderStudent(this.active);
   }
 
-  private async renderStudent(student: Profile) {
+  private renderStudent(student: Profile) {
     const wrap = el('div');
     this.root.appendChild(wrap);
 
@@ -108,12 +108,24 @@ export class ParentDashboard {
     wrap.appendChild(liveBox);
     this.watchPresence(student.id, liveBox.querySelector('.live-status') as HTMLElement);
 
-    // Reports
-    const reports = await fetchDailyReports(student.id);
-    if (this.destroyed || !wrap.isConnected) return;
-    const gate = parentGateStatus(reports);
+    // Reports live in one box that is refilled in place (e.g. after "Mark reviewed"),
+    // so the section never appears twice.
     const reportsBox = el('div');
     reportsBox.style.cssText = 'background:#fff8ec;border:2px solid #2b2033;border-radius:14px;padding:12px;';
+    reportsBox.innerHTML = '<div style="font-weight:800;margin-bottom:6px;">📋 Daily reports</div><div style="opacity:.7;">Loading…</div>';
+    wrap.appendChild(reportsBox);
+    this.renderReports(student, reportsBox);
+  }
+
+  /** Latest reports request per box; older responses for the same box are dropped so rows are never duplicated. */
+  private reportsTokens = new WeakMap<HTMLElement, number>();
+
+  private async renderReports(student: Profile, reportsBox: HTMLElement) {
+    const token = (this.reportsTokens.get(reportsBox) ?? 0) + 1;
+    this.reportsTokens.set(reportsBox, token);
+    const reports = await fetchDailyReports(student.id);
+    if (this.destroyed || !reportsBox.isConnected || token !== this.reportsTokens.get(reportsBox)) return;
+    const gate = parentGateStatus(reports);
     reportsBox.innerHTML = `<div style="font-weight:800;margin-bottom:6px;">📋 Daily reports</div>
       ${gate.blocked ? `<div style="background:#f7d9d6;border-radius:8px;padding:8px;margin-bottom:8px;font-weight:700;">⚠️ ${gate.overdueCount} report(s) overdue by 2+ days — ${escapeHtml(student.username)} will lose Friday's test and next week's classes until these are checked off.</div>` : ''}
       ${!reports.length ? '<div style="opacity:.7;">No reports yet — one is sent home at the end of each school day.</div>' : ''}`;
@@ -129,11 +141,22 @@ export class ParentDashboard {
       const btn = el('button', 'msg-btn' + (r.checked ? '' : overdue ? '' : ' go'), r.checked ? '✅ Checked' : overdue ? '⚠️ Check now' : 'Mark reviewed') as HTMLButtonElement;
       if (overdue && !r.checked) btn.style.background = '#f2a154';
       btn.disabled = r.checked;
-      btn.onclick = async () => { await markReportChecked(r.id); this.renderStudent(student); };
+      btn.onclick = async () => {
+        btn.disabled = true;
+        const { error } = await markReportChecked(r.id);
+        if (this.destroyed || !reportsBox.isConnected) return; // switched tabs meanwhile
+        if (error) {
+          btn.disabled = false;
+          btn.textContent = '⚠️ Try again';
+          btn.title = error.message;
+          console.warn('[parent] mark reviewed failed', error);
+          return;
+        }
+        this.renderReports(student, reportsBox);
+      };
       row.append(summary, btn);
       reportsBox.appendChild(row);
     });
-    wrap.appendChild(reportsBox);
   }
 
   private watchPresence(studentId: string, out: HTMLElement) {
@@ -154,7 +177,6 @@ export class ParentDashboard {
     ch.on('presence', { event: 'sync' }, refresh);
     ch.subscribe();
     this.presenceChannel = ch;
-    refresh();
   }
 
   destroy() {
