@@ -19,11 +19,19 @@ export class Character {
   private stepPhase = 0;
   visible = true;
 
-  constructor(public scene: Phaser.Scene, public texKey: string, x: number, y: number) {
+  /** height: display size relative to an average adult — younger grades are shorter (see bodyHeight). */
+  constructor(public scene: Phaser.Scene, public texKey: string, x: number, y: number, public height = 1) {
     this.x = x;
     this.y = y;
-    this.shadow = scene.add.image(x, y, 'shadow').setOrigin(0.5, 0.6);
-    this.sprite = scene.add.sprite(x, y, texKey, 0).setOrigin(0.5, 1).setScale(0.25);
+    this.shadow = scene.add.image(x, y, 'shadow').setOrigin(0.5, 0.6).setScale(Math.sqrt(height));
+    this.sprite = scene.add.sprite(x, y, texKey, 0).setOrigin(0.5, 1).setScale(0.25 * height);
+    this.sync();
+  }
+
+  setHeight(h: number) {
+    this.height = h;
+    this.sprite.setScale(0.25 * h);
+    this.shadow.setScale(Math.sqrt(h));
     this.sync();
   }
 
@@ -95,13 +103,15 @@ export class Character {
   sync() {
     const idx = frameIndex(DIRS.includes(this.dir as any) ? (this.dir as any) : 'down', this.pose);
     this.sprite.setFrame(idx);
-    this.sprite.setPosition(this.x, this.y + 1);
+    // Seated: keep the hips on the chair whatever the character's size (hips sit ~19px above the frame bottom).
+    const sitLift = this.pose === 'sit' ? (1 - this.height) * 19 * 0.25 : 0;
+    this.sprite.setPosition(this.x, this.y + 1 - sitLift);
     this.sprite.setDepth(this.y);
     this.shadow.setPosition(this.x, this.y - 1);
     this.shadow.setDepth(2);
     this.shadow.setVisible(this.visible && this.pose !== 'sit');
     if (this.emote) {
-      this.emote.setPosition(this.x, this.y - 24 + (this.pose === 'sit' ? 2 : 0));
+      this.emote.setPosition(this.x, this.y - 24 * this.height + (this.pose === 'sit' ? 2 : 0));
       this.emote.setDepth(10000 + this.y);
       if (this.scene.time.now > this.emoteUntil) this.emote.setVisible(false);
     }

@@ -100,19 +100,19 @@ export function buildRoster(): Person[] {
   });
   const teacher = (name: string, subject: Subject, look: Partial<Look>, personality: Person['personality']) =>
     people.push({ id: id++, name, role: 'teacher', subject, personality, look: randomLook(id * 13 + 3, { backpack: undefined, outfit: 'blazer', ...look }) });
-  teacher('Ms. Alvarez', 'math', { skin: '#dda47c', hair: '#2b2024', hairStyle: 'bun', shirt: '#c0504d', pants: '#2d2a33', glasses: true }, 'nerdy');
-  teacher('Mrs. Kim', 'english', { skin: '#f1c29e', hair: '#2b2024', hairStyle: 'bob', shirt: '#6a8e5a', pants: '#3b3f58', outfit: 'dress' }, 'cheerful');
-  teacher('Mr. Okafor', 'science', { skin: '#5f3c29', hair: '#2b2024', hairStyle: 'buzz', shirt: '#f4f0e6', pants: '#3b4a78', glasses: true }, 'nerdy');
-  teacher('Ms. Dubois', 'art', { skin: '#f8dcc4', hair: '#b8452e', hairStyle: 'curly', shirt: '#e874a8', pants: '#4a6b4a', outfit: 'tee' }, 'artsy');
-  teacher('Mr. Haddad', 'music', { skin: '#b97d55', hair: '#4a2f22', hairStyle: 'short', shirt: '#6b4fa0', pants: '#2d2a33' }, 'funny');
-  teacher('Coach Brooks', 'pe', { skin: '#8f5b3b', hair: '#2b2024', hairStyle: 'short', shirt: '#e2544a', pants: '#3b3f58', outfit: 'hoodie', hat: 'cap' }, 'sporty');
-  teacher('Mrs. Lin', 'reading', { skin: '#f1c29e', hair: '#d9d9e2', hairStyle: 'bun', shirt: '#3fa7a0', pants: '#3b3f58', glasses: true, outfit: 'dress' }, 'shy');
+  teacher('Ms. Alvarez', 'math', { build: { height: 1.0, width: 0.92, legs: 0.94, head: 1.04 }, skin: '#dda47c', hair: '#2b2024', hairStyle: 'bun', shirt: '#c0504d', pants: '#2d2a33', glasses: true }, 'nerdy');
+  teacher('Mrs. Kim', 'english', { build: { height: 1.1, width: 0.86, legs: 1.12, head: 0.96 }, skin: '#f1c29e', hair: '#2b2024', hairStyle: 'bob', shirt: '#6a8e5a', pants: '#3b3f58', outfit: 'dress' }, 'cheerful');
+  teacher('Mr. Okafor', 'science', { build: { height: 1.24, width: 0.9, legs: 1.2, head: 0.92 }, skin: '#5f3c29', hair: '#2b2024', hairStyle: 'buzz', shirt: '#f4f0e6', pants: '#3b4a78', glasses: true }, 'nerdy');
+  teacher('Ms. Dubois', 'art', { build: { height: 1.02, width: 1.28, legs: 0.9, head: 1.02 }, skin: '#f8dcc4', hair: '#b8452e', hairStyle: 'curly', shirt: '#e874a8', pants: '#4a6b4a', outfit: 'tee' }, 'artsy');
+  teacher('Mr. Haddad', 'music', { build: { height: 1.08, width: 1.4, legs: 0.88, head: 1.06 }, skin: '#b97d55', hair: '#4a2f22', hairStyle: 'short', shirt: '#6b4fa0', pants: '#2d2a33' }, 'funny');
+  teacher('Coach Brooks', 'pe', { build: { height: 1.2, width: 1.24, legs: 1.06, head: 0.96 }, skin: '#8f5b3b', hair: '#2b2024', hairStyle: 'short', shirt: '#e2544a', pants: '#3b3f58', outfit: 'hoodie', hat: 'cap' }, 'sporty');
+  teacher('Mrs. Lin', 'reading', { build: { height: 0.98, width: 1.04, legs: 0.86, head: 1.04 }, skin: '#f1c29e', hair: '#d9d9e2', hairStyle: 'bun', shirt: '#3fa7a0', pants: '#3b3f58', glasses: true, outfit: 'dress' }, 'shy');
   const staff = (name: string, post: string, look: Partial<Look>, personality: Person['personality']) =>
     people.push({ id: id++, name, role: 'staff', post, personality, look: randomLook(id * 17 + 5, { backpack: undefined, ...look }) });
-  staff('Chef Rosa', 'cafeteria', { skin: '#dda47c', hair: '#2b2024', hairStyle: 'short', shirt: '#f4f0e6', pants: '#2d2a33', outfit: 'apron', hat: 'chef' }, 'cheerful');
-  staff('Principal Grant', 'lobby', { skin: '#b97d55', hair: '#d9d9e2', hairStyle: 'short', shirt: '#3b3f58', pants: '#2d2a33', outfit: 'blazer', glasses: true }, 'cheerful');
-  staff('Mr. Joe', 'janitor', { skin: '#f1c29e', hair: '#7a4a2a', hairStyle: 'short', shirt: '#6b8fb5', pants: '#3b4a78', outfit: 'overalls', hat: 'cap' }, 'funny');
-  staff('Ms. Patty', 'office', { skin: '#f8dcc4', hair: '#ecc66e', hairStyle: 'long', shirt: '#8b6fd1', pants: '#2d2a33', outfit: 'blazer' }, 'cheerful');
+  staff('Chef Rosa', 'cafeteria', { build: { height: 1.04, width: 1.3, legs: 0.92 }, skin: '#dda47c', hair: '#2b2024', hairStyle: 'short', shirt: '#f4f0e6', pants: '#2d2a33', outfit: 'apron', hat: 'chef' }, 'cheerful');
+  staff('Principal Grant', 'lobby', { build: { height: 1.18, width: 1.1, legs: 1.08, head: 0.97 }, skin: '#b97d55', hair: '#d9d9e2', hairStyle: 'short', shirt: '#3b3f58', pants: '#2d2a33', outfit: 'blazer', glasses: true }, 'cheerful');
+  staff('Mr. Joe', 'janitor', { build: { height: 1.12, width: 1.16, legs: 0.98, head: 1.02 }, skin: '#f1c29e', hair: '#7a4a2a', hairStyle: 'short', shirt: '#6b8fb5', pants: '#3b4a78', outfit: 'overalls', hat: 'cap' }, 'funny');
+  staff('Ms. Patty', 'office', { build: { height: 1.08, width: 0.94, legs: 1.04 }, skin: '#f8dcc4', hair: '#ecc66e', hairStyle: 'long', shirt: '#8b6fd1', pants: '#2d2a33', outfit: 'blazer' }, 'cheerful');
   return people;
 }
 

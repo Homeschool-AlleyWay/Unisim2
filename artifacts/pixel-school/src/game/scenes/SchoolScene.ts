@@ -2,7 +2,7 @@
 import Phaser from 'phaser';
 import { renderBackground, PLAYER_LOCKER_X, HALL_TV_PX } from '../art/tiles';
 import { buildFurnitureTextures } from '../art/furniture';
-import { buildCharacterSheet, FRAME_H, FRAME_W, Look, randomLook, SHEET_COLS, SHEET_ROWS } from '../art/characters';
+import { bodyHeight, buildCharacterSheet, FRAME_H, FRAME_W, Look, randomLook, SHEET_COLS, SHEET_ROWS } from '../art/characters';
 import { DPR } from '../display';
 import { buildGrid, MAP_H, MAP_W, ROOMS, roomContaining, SchoolGrid, TILE } from '../data/schoolMap';
 import { buildPlacement, Dir, PlacedObject, Seat } from '../data/furniture';
@@ -64,6 +64,7 @@ export class SchoolScene extends Phaser.Scene {
   target: Target | null = null;
   stepTimer = 0;
   charSheets: Record<string, HTMLCanvasElement> = {};
+  private remoteLookSig = new Map<string, string>();
   bgCanvas!: HTMLCanvasElement;
   propCanvases: Record<string, HTMLCanvasElement> = {};
   hallTv!: Phaser.GameObjects.Image;
@@ -317,6 +318,7 @@ export class SchoolScene extends Phaser.Scene {
     this.net = null;
     for (const c of this.remotePlayers.values()) c.destroy();
     this.remotePlayers.clear();
+    this.remoteLookSig.clear();
     if (!this.userId) return;
     const uid = this.userId;
     upsertProfile(uid, this.save.name, this.save.schoolGrade, this.save.look).catch(() => {});
@@ -334,19 +336,27 @@ export class SchoolScene extends Phaser.Scene {
     for (const o of others) {
       seen.add(o.id);
       const key = 'char_net_' + o.id;
-      if (!this.textures.exists(key)) this.addCharTexture(key, o.look);
+      // Rebuild the sprite if this player's look changed since we last drew them (e.g. they rejoined).
+      const sig = JSON.stringify(o.look);
       let c = this.remotePlayers.get(o.id);
+      if (this.remoteLookSig.get(o.id) !== sig) {
+        c?.destroy(); c = undefined; this.remotePlayers.delete(o.id);
+        this.addCharTexture(key, o.look);
+        this.remoteLookSig.set(o.id, sig);
+      }
       if (!c) {
-        c = new Character(this, key, o.x, o.y);
+        c = new Character(this, key, o.x, o.y, bodyHeight(o.look, o.grade));
         this.remotePlayers.set(o.id, c);
       }
+      const h = bodyHeight(o.look, o.grade);
+      if (c.height !== h) c.setHeight(h);
       const seat = o.seatId != null ? this.seats.find((s) => s.id === o.seatId) : null;
       if (seat) c.sitAt(seat);
       else { c.standUp(); c.setPos(o.x, o.y); c.face(o.dir as Dir); }
       c.sync();
     }
     for (const [id, c] of this.remotePlayers) {
-      if (!seen.has(id)) { c.destroy(); this.remotePlayers.delete(id); }
+      if (!seen.has(id)) { c.destroy(); this.remotePlayers.delete(id); this.remoteLookSig.delete(id); }
     }
   }
 
@@ -380,7 +390,7 @@ export class SchoolScene extends Phaser.Scene {
     this.save = !res.fresh && existing ? existing : newSave(res.name, res.look, res.schoolGrade);
     this.addCharTexture('char_player', this.save.look);
     this.player.destroy();
-    this.player = new Character(this, 'char_player', 41 * TILE + 8, 49 * TILE + 13);
+    this.player = new Character(this, 'char_player', 41 * TILE + 8, 49 * TILE + 13, bodyHeight(this.save.look, this.save.schoolGrade));
     this.cameras.main.startFollow(this.player.sprite, true, 0.18, 0.18);
     this.hud.setVisible(true);
     writeSave(this.save);

@@ -687,7 +687,10 @@ export class Classroom3D {
       const seated = ch.pose === 'sit';
       const [fx, fz] = faceDir(ch.dir);
       const fy = floorY(x, z);
-      b.mesh.position.set(x - (seated ? fx * 0.12 : 0), (seated ? 0.14 : 0) + fy, z - (seated ? fz * 0.12 : 0) + (seated && ch.dir === 'up' ? 0.05 : 0));
+      // Sized by grade/build like the 2D sprite; seated kids are lifted so their hips stay on the chair.
+      const h = ch.height;
+      b.mesh.scale.setScalar(h);
+      b.mesh.position.set(x - (seated ? fx * 0.12 : 0), (seated ? 0.14 + 0.267 * (1 - h) : 0) + fy, z - (seated ? fz * 0.12 : 0) + (seated && ch.dir === 'up' ? 0.05 : 0));
       b.mesh.rotation.y = Math.atan2(cam.x - b.mesh.position.x, cam.z - b.mesh.position.z);
       b.mesh.visible = true;
       // Choose the sprite row the camera would see
@@ -700,12 +703,13 @@ export class Classroom3D {
       b.tex.offset.set(col / SHEET_COLS, 1 - (row + 1) / SHEET_ROWS);
       b.shadow.visible = !seated;
       b.shadow.position.set(x, 0.01 + fy, z);
+      b.shadow.scale.setScalar(Math.sqrt(h));
       // Emote bubbles mirror the 2D ones
       const em = ch.emote && ch.emote.visible ? ch.emote.texture.key : '';
       if (em) {
         if (em !== b.emoteKey) { (b.emote.material as THREE.MeshBasicMaterial).map = this.emote(em); (b.emote.material as THREE.MeshBasicMaterial).needsUpdate = true; b.emoteKey = em; }
         b.emote.visible = true;
-        b.emote.position.set(b.mesh.position.x, b.mesh.position.y + 1.48 + Math.sin(this.t * 4) * 0.02, b.mesh.position.z);
+        b.emote.position.set(b.mesh.position.x, b.mesh.position.y + 1.48 * h + Math.sin(this.t * 4) * 0.02, b.mesh.position.z);
         b.emote.rotation.y = b.mesh.rotation.y;
       } else b.emote.visible = false;
     }

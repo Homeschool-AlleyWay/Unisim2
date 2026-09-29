@@ -1,6 +1,7 @@
 // Daily routines for every student, teacher and staff member.
 import Phaser from 'phaser';
 import { Character } from '../entities/Character';
+import { bodyHeight } from '../art/characters';
 import type { Seat, Dir } from '../data/furniture';
 import { TILE } from '../data/schoolMap';
 import { DAY_START, GROUP_SCHEDULE, Group, PERIODS, Person, PLAYER_GROUP, SUBJECTS, nextClassSlot, playerSeatIndex } from '../data/schedule';
@@ -42,7 +43,7 @@ export class NPC {
   talking = false;
   wanderN = 0;
   constructor(public person: Person, scene: Phaser.Scene, x: number, y: number) {
-    this.ch = new Character(scene, 'char_' + person.id, x, y);
+    this.ch = new Character(scene, 'char_' + person.id, x, y, bodyHeight(person.look, person.grade));
   }
   get busy() { return this.talking; }
 }

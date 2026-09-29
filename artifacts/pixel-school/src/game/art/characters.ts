@@ -18,6 +18,34 @@ export interface Look {
   hat?: 'chef' | 'cap' | 'none';
   eyeColor?: string;
   accessory?: 'none' | 'bow' | 'headband' | 'earrings';
+  /** Body structure. Omitted = average build. Overall height is applied when the sprite is shown
+   *  (see bodyHeight); width/legs/head change the proportions drawn into every frame. */
+  build?: Build;
+}
+
+export interface Build {
+  /** Standing height relative to an average adult (1). Adults only — students' height comes from their grade. */
+  height?: number;
+  /** Body girth: torso, arms and (less so) legs. 0.85 slim … 1.4 broad. */
+  width?: number;
+  /** Leg length. 0.85 short … 1.2 long. */
+  legs?: number;
+  /** Head size. 0.9 … 1.1. */
+  head?: number;
+}
+
+/** Students grow with their grade: a 1st grader stands about 3/4 the height of a senior. */
+export function gradeHeight(grade: number): number {
+  const g = Math.max(1, Math.min(12, grade));
+  return 0.8 + ((g - 1) / 11) * 0.3;
+}
+export const ADULT_HEIGHT = 1.14;
+/** Display height factor for a character: by grade for students, by build for adults. */
+export function bodyHeight(look: Look, grade?: unknown): number {
+  const g = Number(grade); // presence data is client-supplied
+  if (Number.isFinite(g) && g >= 1) return gradeHeight(g);
+  const h = look.build?.height;
+  return Number.isFinite(h) ? Math.max(0.9, Math.min(1.3, h as number)) : ADULT_HEIGHT;
 }
 
 export const SKIN_TONES = ['#f8dcc4', '#f1c29e', '#dda47c', '#b97d55', '#8f5b3b', '#5f3c29'];
@@ -189,8 +217,14 @@ function hairBack(c: C, L: Look, hy: number) {
   const H = L.hair, s = L.hairStyle, hiC = shade(H, 0.35);
   if (s === 'afro') { ell(c, 32, hy + 1, 23.5, 21, H); hl(c, 32, hy, 16, Math.PI * 1.15, Math.PI * 1.45, hiC, 2.6); return; }
   if (s === 'buzz') {
-    c.beginPath(); c.ellipse(32, hy + 3, 17.2, 16, 0, Math.PI * 0.95, Math.PI * 2.05); c.closePath();
-    c.fillStyle = shade(H, 0.05); c.fill(); c.strokeStyle = OL; c.lineWidth = 1.4; c.stroke();
+    // Close-cropped hair still covers the whole back of the head, down to the nape
+    // (only covering the crown made buzz-cut characters look bald from behind).
+    ell(c, 32, hy + 0.5, 17.8, 17, vgrad(c, hy - 16, hy + 17, shade(H, 0.1), shade(H, -0.08)));
+    c.fillStyle = L.skin; c.beginPath(); c.ellipse(32, hy + 16.5, 7, 2.2, 0, Math.PI, Math.PI * 2); c.fill();
+    c.fillStyle = shade(H, -0.18);
+    for (let i = 0; i < 14; i++) { const a = i * 2.4, r = 4 + (i * 5) % 11; c.fillRect(32 + Math.cos(a) * r, hy + Math.sin(a) * r * 0.9, 1, 1); }
+    hl(c, 32, hy + 2, 13, Math.PI * 1.2, Math.PI * 1.5, hiC, 2.2);
+    if (L.hat === 'cap') { c.beginPath(); c.ellipse(32, hy - 3, 18, 13, 0, Math.PI, Math.PI * 2); c.closePath(); c.fillStyle = L.shirt; c.fill(); c.strokeStyle = OL; c.lineWidth = LW; c.stroke(); }
     return;
   }
   if (s === 'long') rr(c, 13, hy, 38, 36, 12, H);
@@ -279,10 +313,31 @@ function drawFrame(c: C, L: Look, dir: 'down' | 'left' | 'up', pose: Pose) {
   const ty = 44 + bob + drop; // torso top
   const hy = 27 + bob + drop; // head centre
 
+  // Body structure: legs stretch from the feet, the upper body rides on top of them (and is
+  // widened for broader builds), and the head scales about the neck.
+  const B = L.build ?? {};
+  const clamp = (v: number | undefined, lo: number, hi: number) => Math.max(lo, Math.min(hi, Number.isFinite(v) ? (v as number) : 1));
+  const W = clamp(B.width, 0.8, 1.45), Lg = clamp(B.legs, 0.8, 1.25), Hd = clamp(B.head, 0.85, 1.15);
+  const FEET = 92, NECK = hy + 16;
+  const dy = (sit ? -16 : -26) * (Lg - 1);
+  const legW = 1 + (W - 1) * 0.6;
+  // Keep tall builds inside the frame (hair/hats included).
+  const top = NECK - (NECK - (hy - (L.hat === 'chef' ? 31 : 21))) * Hd + dy;
+  const fit = top < 1 ? (FEET - 1) / (FEET - top) : 1;
+  c.save();
+  if (fit !== 1) { c.translate(32, FEET); c.scale(fit, fit); c.translate(-32, -FEET); }
+  const legsT = () => { c.save(); c.translate(32, FEET); c.scale(legW, Lg); c.translate(-32, -FEET); };
+  const bodyT = () => { c.save(); c.translate(32, dy); c.scale(W, 1); c.translate(-32, 0); };
+  const headT = () => { c.save(); c.translate(32, NECK + dy); c.scale(Hd, Hd); c.translate(-32, -NECK); };
+  const done = () => c.restore();
+
   if (dir === 'down' || dir === 'up') {
     const back = dir === 'up';
+    headT();
     if (!back) hairBehindDown(c, L, hy);
+    done();
     // legs
+    legsT();
     if (!sit) {
       const lLift = Math.max(0, -phase) * 4, rLift = Math.max(0, phase) * 4;
       leg(c, L, 27, 66 + bob, 26.5, 90 - lLift, false);
@@ -292,13 +347,17 @@ function drawFrame(c: C, L: Look, dir: 'down' | 'left' | 'up', pose: Pose) {
       limb(c, 37, 76, 37, 84, 8.5, L.outfit === 'dress' ? L.skin : L.pants);
       ell(c, 26.5, 88, 5, 3.4, L.shoes); ell(c, 37.5, 88, 5, 3.4, L.shoes);
     }
+    done();
     // arms (behind torso edges)
+    bodyT();
     const sw = phase * 2.2;
     arm(c, L, 20, ty + 5, 17.5, ty + 21 + sw);
     arm(c, L, 44, ty + 5, 46.5, ty + 21 - sw);
     torso(c, L, 19, ty, 26, back ? 'up' : 'down');
     if (back && L.backpack) backpack(c, L, 20.5, ty + 2, 23, 22);
+    done();
     // neck + head
+    headT();
     rr(c, 28.5, hy + 12, 7, 6, 2, shade(L.skin, -0.1), false);
     if (back || !['long', 'bob', 'afro'].includes(L.hairStyle)) { ell(c, 14.8, hy + 3, 3.6, 4.2, L.skin); ell(c, 49.2, hy + 3, 3.6, 4.2, L.skin); }
     ell(c, 32, hy, 17.5, 16.5, vgrad(c, hy - 16, hy + 16, shade(L.skin, 0.08), shade(L.skin, -0.06)));
@@ -311,11 +370,14 @@ function drawFrame(c: C, L: Look, dir: 'down' | 'left' | 'up', pose: Pose) {
       if (L.hat === 'chef') chefHat(c, 32, hy);
       drawAccessory(c, L, 32, hy);
     }
+    done();
+    done(); // fit
     return;
   }
 
   // ----- side (facing left) -----
   const hipX = 33, hipY = 66 + bob;
+  legsT();
   if (!sit) {
     const a = phase * 0.42;
     const far = -a, near = a;
@@ -326,24 +388,33 @@ function drawFrame(c: C, L: Look, dir: 'down' | 'left' | 'up', pose: Pose) {
     limb(c, 21, 78, 20, 88, 7.5, L.outfit === 'dress' ? L.skin : L.pants);
     ell(c, 17, 90, 6, 3.4, L.shoes);
   }
+  done();
   const armA = -phase * 0.5;
+  bodyT();
   arm(c, L, 33, ty + 5, 33 + Math.sin(armA) * 15, ty + 5 + Math.cos(armA) * 15, true);
   if (L.backpack) backpack(c, L, 37, ty + 1, 11, 22);
   torso(c, L, 23, ty, 19, 'side');
+  done();
+  headT();
   if (L.hairStyle === 'long') rr(c, 34, hy + 2, 12, 30, 6, shade(L.hair, -0.08));
   if (L.hairStyle === 'ponytail') { limb(c, 46, hy - 4, 52, hy + 14, 8, L.hair); ell(c, 46.5, hy - 3, 2.8, 3.5, '#e2544a'); }
   if (L.hairStyle === 'pigtails') ell(c, 48, hy + 10, 6, 9, L.hair);
+  done();
+  bodyT();
   arm(c, L, 32, ty + 5, 32 - Math.sin(armA) * 15, ty + 5 + Math.cos(armA) * 15);
+  done();
+  headT();
   rr(c, 27.5, hy + 12, 7, 6, 2, shade(L.skin, -0.1), false);
   // head
   const H = L.hair;
   if (L.hairStyle === 'afro') ell(c, 34, hy - 1, 22, 20.5, H);
   ell(c, 31, hy, 17, 16.5, vgrad(c, hy - 16, hy + 16, shade(L.skin, 0.08), shade(L.skin, -0.06)));
-  if (L.hairStyle !== 'buzz') {
-    // hair covers top + back; face window left open
+  {
+    // hair covers top + back; face window left open (buzz cuts too, just a touch lighter)
     c.save();
     c.beginPath(); c.ellipse(31, hy, 17, 16.5, 0, 0, Math.PI * 2); c.clip();
-    c.fillStyle = vgrad(c, hy - 16, hy + 16, shade(H, 0.12), shade(H, -0.1));
+    const lift = L.hairStyle === 'buzz' ? 0.06 : 0;
+    c.fillStyle = vgrad(c, hy - 16, hy + 16, shade(H, 0.12 + lift), shade(H, -0.1 + lift));
     c.beginPath();
     c.moveTo(10, hy - 20); c.lineTo(52, hy - 20); c.lineTo(52, hy + 20);
     c.lineTo(38, hy + 20);
@@ -353,8 +424,6 @@ function drawFrame(c: C, L: Look, dir: 'down' | 'left' | 'up', pose: Pose) {
     c.restore();
     c.beginPath(); c.ellipse(31, hy, 17, 16.5, 0, 0, Math.PI * 2); c.strokeStyle = OL; c.lineWidth = LW; c.stroke();
     hl(c, 33, hy + 2, 13, Math.PI * 1.25, Math.PI * 1.55, shade(H, 0.35), 2.6);
-  } else {
-    c.beginPath(); c.ellipse(32, hy - 3, 16.5, 13.5, 0, Math.PI * 0.95, Math.PI * 2.02); c.fillStyle = shade(H, 0.05); c.fill();
   }
   if (L.hairStyle === 'bun') ell(c, 42, hy - 13, 7, 6.5, H);
   if (L.hairStyle === 'bob') rr(c, 34, hy - 4, 16, 24, 7, H);
@@ -363,6 +432,8 @@ function drawFrame(c: C, L: Look, dir: 'down' | 'left' | 'up', pose: Pose) {
   drawEyes(c, L, 21.5, hy + 4, true);
   if (L.hat === 'cap') { c.beginPath(); c.ellipse(32, hy - 5, 17.5, 12, 0, Math.PI, Math.PI * 2); c.closePath(); c.fillStyle = L.shirt; c.fill(); c.strokeStyle = OL; c.lineWidth = LW; c.stroke(); ell(c, 16, hy - 5, 9, 3, shade(L.shirt, -0.25)); }
   if (L.hat === 'chef') chefHat(c, 32, hy);
+  done();
+  done(); // fit
 }
 
 /** Builds a 384x384 sheet: rows = down,left,right,up ; cols = stand,w1,w2,w3,w4,sit */
