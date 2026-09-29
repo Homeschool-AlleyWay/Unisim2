@@ -1,5 +1,6 @@
 // Bell schedule, subjects, class groups and the people of Maple Grove School.
 import { Look, randomLook } from '../art/characters';
+import type { Grade } from './curriculum';
 
 export type PeriodKind = 'arrival' | 'class' | 'passing' | 'lunch' | 'clubs' | 'dismissal';
 export interface Period { name: string; start: number; end: number; kind: PeriodKind; slot?: number }
@@ -77,6 +78,8 @@ export interface Person {
   name: string;
   role: Role;
   group?: Group;
+  /** Students: their own grade. Every grade shares the same subject classrooms, each on its own grade's lesson. */
+  grade?: Grade;
   subject?: Subject; // teachers
   post?: string; // staff: 'cafeteria' | 'lobby' | 'janitor'
   look: Look;
@@ -93,7 +96,7 @@ export function buildRoster(): Person[] {
   const people: Person[] = [];
   let id = 1;
   STUDENT_NAMES.forEach(([name, group, personality], i) => {
-    people.push({ id: id++, name, role: 'student', group, personality, look: randomLook(i * 31 + 7) });
+    people.push({ id: id++, name, role: 'student', group, grade: (((i * 5) % 12) + 1) as Grade, personality, look: randomLook(i * 31 + 7) });
   });
   const teacher = (name: string, subject: Subject, look: Partial<Look>, personality: Person['personality']) =>
     people.push({ id: id++, name, role: 'teacher', subject, personality, look: randomLook(id * 13 + 3, { backpack: undefined, outfit: 'blazer', ...look }) });

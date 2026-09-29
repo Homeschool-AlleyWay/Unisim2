@@ -47,22 +47,27 @@ export function buildPlacement(): Placement {
   };
 
   // ---------- Classrooms ----------
-  const classroom = (room: string, cols: number[], rows: number[], tdx: number, tdy: number) => {
+  // Auditorium style: one room per subject that every grade shares. Long lecture-desk rows
+  // (split by a centre aisle) climb in tiers toward the back — see TIERS in schoolMap.ts.
+  // Everyone sees the same teacher, room and classmates; each player's board shows the
+  // lesson for their own grade.
+  const lectureHall = (room: string, blocks: [number, number][], rows: number[], tdx: number, tdy: number) => {
     obj('teacherDesk', tdx, tdy, 2, 1, true, { interact: 'computer', label: "Teacher's desk" });
     seat(tdx, tdy - 1, 'down', room, 'teacher');
     for (const y of rows)
-      for (const x of cols) {
-        obj('desk', x, y, 1, 1, true);
-        seat(x, y + 1, 'up', room, 'desk', 'chair');
-      }
+      for (const [x1, x2] of blocks)
+        for (let x = x1; x <= x2; x++) {
+          obj(x === x1 ? 'lectureDeskL' : x === x2 ? 'lectureDeskR' : 'lectureDesk', x, y, 1, 1, true);
+          seat(x, y + 1, 'up', room, 'desk', 'chair');
+        }
   };
   // Classroom A (Math)
-  classroom('classA', [5, 7, 12, 14], [9, 11, 13], 9, 7);
+  lectureHall('classA', [[5, 9], [12, 15]], [9, 11, 13], 9, 7);
   obj('plant', 4, 6);
   obj('bookshelf', 15, 6, 2, 1, true, { interact: 'read', label: 'Math books' });
   obj('globe', 13, 6, 1, 1, true, { interact: 'globe', label: 'Globe' });
   // Classroom B (English)
-  classroom('classB', [5, 7, 11, 13], [28, 30], 12, 27);
+  lectureHall('classB', [[5, 8], [11, 14]], [28, 30], 12, 27);
   obj('bookshelf', 4, 26, 2, 1, true, { interact: 'read', label: 'Novels' });
   obj('plant', 15, 26);
   obj('plant', 15, 32);
@@ -90,7 +95,8 @@ export function buildPlacement(): Placement {
   obj('skeleton', 33, 6, 1, 1, true, { interact: 'skeleton', label: 'Skeleton "Mr. Bones"' });
   obj('labShelf', 42, 6, 2, 1, true, { interact: 'experiment', label: 'Chemical shelf' });
   obj('labSink', 44, 6, 1, 1, true, { interact: 'sink', label: 'Lab sink' });
-  for (const y of [9, 12])
+  // Lab stations on the same rising tiers as the other subject rooms.
+  for (const y of [9, 11, 13])
     for (const x of [34, 41]) {
       obj('labBench', x, y, 3, 1, true, { interact: 'experiment', label: 'Lab bench' });
       for (let i = 0; i < 3; i++) seat(x + i, y + 1, 'up', 'lab', 'desk', 'stool');

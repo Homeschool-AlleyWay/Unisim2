@@ -18,7 +18,28 @@ const bookRow = (c: Ctx, x: number, y: number, w: number, seed: number) => {
   }
 };
 
+/** One seat-wide segment of a long auditorium lecture desk. Segments sit side by side, so only the
+ *  row ends (L/R) get side edges; drawn with its own outline because the auto-outline would split them. */
+const lectureDesk = (c: Ctx, left: boolean, right: boolean) => {
+  const x0 = left ? 1 : 0, x1 = right ? 15 : 16, w = x1 - x0;
+  const INK = '#2b2033';
+  rect(c, x0, 3, w, 10, WOOD_L);
+  rect(c, x0, 3, w, 1, INK);
+  rect(c, x0, 4, w, 1, shade(WOOD_L, 0.15));
+  rect(c, x0, 12, w, 1, WOOD_D);
+  rect(c, x0, 13, w, 4, WOOD);
+  rect(c, x0, 16, w, 1, WOOD_D);
+  rect(c, x0, 17, w, 1, INK);
+  if (left) { rect(c, 0, 3, 1, 15, INK); rect(c, 1, 5, 1, 12, WOOD_D); }
+  if (right) { rect(c, 15, 3, 1, 15, INK); rect(c, 14, 5, 1, 12, WOOD_D); }
+  rect(c, 4, 6, 6, 4, '#fbf8f0'); rect(c, 5, 7, 4, 1, '#9aa'); rect(c, 5, 8, 3, 1, '#9aa');
+  rect(c, 11, 5, 1, 5, '#f0c24b'); px(c, 11, 4, '#333');
+};
+
 const FURNITURE: Record<string, [number, number, Draw]> = {
+  lectureDesk: [16, 18, (c) => lectureDesk(c, false, false)],
+  lectureDeskL: [16, 18, (c) => lectureDesk(c, true, false)],
+  lectureDeskR: [16, 18, (c) => lectureDesk(c, false, true)],
   desk: [16, 18, (c) => {
     rect(c, 2, 12, 2, 5, WOOD_D); rect(c, 12, 12, 2, 5, WOOD_D);
     box(c, 1, 4, 14, 9, WOOD_L, WOOD_D);
@@ -303,7 +324,7 @@ export function buildFurnitureTextures(): Record<string, HTMLCanvasElement> {
   for (const [key, [w, h, draw]] of Object.entries(FURNITURE)) {
     const [c, ctx] = makeCanvas(w, h);
     draw(ctx, w, h);
-    if (key !== 'marker' && !key.startsWith('chair') && key !== 'stool') outline(c, '#2b2033');
+    if (key !== 'marker' && !key.startsWith('chair') && key !== 'stool' && !key.startsWith('lectureDesk')) outline(c, '#2b2033');
     out[key] = c;
   }
   for (const [key, draw] of Object.entries(EMOTES)) {

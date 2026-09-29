@@ -5,7 +5,10 @@ import * as THREE from 'three';
 import { buildCharacterSheet, DIRS, FRAME_H, FRAME_W, Look, POSES, SHEET_COLS, SHEET_ROWS } from '../art/characters';
 import { shade } from '../art/pixel';
 import type { PlacedObject, Seat, Dir } from '../data/furniture';
-import { Room, SchoolGrid, TILE } from '../data/schoolMap';
+import { floorLevel, Room, SchoolGrid, TIER_STEP, TIERS, TILE } from '../data/schoolMap';
+
+/** Floor height under a tile — the raised tiers of the auditorium classrooms, 0 elsewhere. */
+const floorY = (tx: number, ty: number) => floorLevel(Math.floor(tx), Math.floor(ty)) * TIER_STEP;
 import type { NPC } from '../systems/NPCSystem';
 import { DPR } from '../display';
 
@@ -133,7 +136,7 @@ export class Classroom3D {
     this.buildRoom(room);
     this.buildHands(seat, look);
     const standing = seat.kind === 'stand';
-    this.eye.set(seat.tx + 0.5, standing ? 1.55 : 1.28, seat.ty + (seat.facing === 'up' ? 0.62 : 0.5));
+    this.eye.set(seat.tx + 0.5, (standing ? 1.55 : 1.28) + floorY(seat.tx, seat.ty), seat.ty + (seat.facing === 'up' ? 0.62 : 0.5));
     this.baseYaw = seat.facing === 'up' ? 0 : seat.facing === 'down' ? Math.PI : seat.facing === 'left' ? Math.PI / 2 : -Math.PI / 2;
     // Face the front of the room: the chalkboard if there is one, else the teacher's spot
     const b = BOARDS[room.id];
@@ -246,10 +249,31 @@ export class Classroom3D {
     const isOutside = (x: number, y: number) => ['grass', 'path', 'sidewalk', 'road'].includes(grid.at(x, y) as string);
 
     // Floor — the exact 2D floor art (rugs, shadows and all)
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), this.texMat(crop(bg, r.x1 * TILE, r.y1 * TILE, W * TILE, D * TILE)));
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.set(cx, 0, cz);
-    this.roomGroup.add(floor);
+    if (!TIERS[r.id]) {
+      const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), this.texMat(crop(bg, r.x1 * TILE, r.y1 * TILE, W * TILE, D * TILE)));
+      floor.rotation.x = -Math.PI / 2;
+      floor.position.set(cx, 0, cz);
+      this.roomGroup.add(floor);
+    } else {
+      // Auditorium classroom: one floor strip per tile row at its tier height, with a riser
+      // face wherever the next row steps up.
+      const riser = this.lambert(shade(r.paint, -0.35));
+      let prevY = 0;
+      for (let y = r.y1; y <= r.y2; y++) {
+        const h = floorY(r.x1, y);
+        const strip = new THREE.Mesh(new THREE.PlaneGeometry(W, 1), this.texMat(crop(bg, r.x1 * TILE, y * TILE, W * TILE, TILE)));
+        strip.rotation.x = -Math.PI / 2;
+        strip.position.set(cx, h, y + 0.5);
+        this.roomGroup.add(strip);
+        if (h > prevY) {
+          const face = new THREE.Mesh(new THREE.PlaneGeometry(W, h - prevY), riser);
+          face.position.set(cx, (h + prevY) / 2, y);
+          face.rotation.y = Math.PI; // faces the stage
+          this.roomGroup.add(face);
+        }
+        prevY = h;
+      }
+    }
 
     // North wall — the 2D wall face (chalkboard, windows, posters) cropped straight from the map
     const north = crop(bg, r.x1 * TILE, (r.y1 - 2) * TILE, W * TILE, 32);
@@ -312,7 +336,14 @@ export class Classroom3D {
     for (const o of this.d.objects) {
       if (o.hidden || o.type === 'marker') continue;
       if (o.tx + o.fw - 1 < r.x1 || o.tx > r.x2 || o.ty + o.fh - 1 < r.y1 || o.ty > r.y2) continue;
-      this.buildProp(o);
+      const h = floorY(o.tx, o.ty + o.fh - 1);
+      if (!h) { this.buildProp(o); continue; }
+      // On a raised tier: build the prop inside a lifted group (props place themselves from y=0).
+      const room = this.roomGroup, lifted = new THREE.Group();
+      lifted.position.y = h;
+      room.add(lifted);
+      this.roomGroup = lifted;
+      try { this.buildProp(o); } finally { this.roomGroup = room; }
     }
   }
 
@@ -408,6 +439,14 @@ export class Classroom3D {
     const tex = this.d.props[o.type];
     const cx = o.tx + o.fw / 2, cz = o.ty + o.fh / 2;
     switch (o.type) {
+      case 'lectureDesk': case 'lectureDeskL': case 'lectureDeskR': {
+        // Full-width segments so a row reads as one continuous lecture desk.
+        const wood = this.lambert('#a8703f');
+        this.topped(1.0, 0.66, 0.74, cx, cz - 0.05, '#e2b27a', '#c08a55'); // plain top: the 2D sprite's paper/pencil turn blocky at 3D scale
+        this.box(1.0, 0.62, 0.04, [wood, wood, wood, wood, this.lambert('#d39a5e'), wood], cx, 0.41, cz - 0.36);
+        if (o.type !== 'lectureDesk') this.box(0.04, 0.7, 0.66, wood, o.type === 'lectureDeskL' ? cx - 0.48 : cx + 0.48, 0.35, cz - 0.05);
+        return;
+      }
       case 'desk': {
         this.legs(0.84, 0.6, 0.7, cx, cz - 0.05, '#8a5a34', 0.05);
         this.topped(0.92, 0.68, 0.74, cx, cz - 0.05, crop(tex, 1, 4, 14, 9), '#a8703f');
@@ -504,7 +543,7 @@ export class Classroom3D {
     // Lab benches / art tables sit at different heights than a classroom desk —
     // match the notebook's surface height to whatever furniture is actually under it,
     // otherwise it floats disconnected in the air.
-    const surfaceY = seat.room === 'lab' ? 0.905 : 0.745;
+    const surfaceY = (seat.room === 'lab' ? 0.905 : 0.745) + floorY(seat.tx, seat.ty);
     const [fx, fz] = faceDir(seat.facing);
     const cx = seat.tx + 0.5 + fx * 0.72, cz = seat.ty + 0.5 + fz * 0.72;
     // Notebook with today's notes
@@ -647,7 +686,8 @@ export class Classroom3D {
       const b = this.billboard(n);
       const seated = ch.pose === 'sit';
       const [fx, fz] = faceDir(ch.dir);
-      b.mesh.position.set(x - (seated ? fx * 0.12 : 0), seated ? 0.14 : 0, z - (seated ? fz * 0.12 : 0) + (seated && ch.dir === 'up' ? 0.05 : 0));
+      const fy = floorY(x, z);
+      b.mesh.position.set(x - (seated ? fx * 0.12 : 0), (seated ? 0.14 : 0) + fy, z - (seated ? fz * 0.12 : 0) + (seated && ch.dir === 'up' ? 0.05 : 0));
       b.mesh.rotation.y = Math.atan2(cam.x - b.mesh.position.x, cam.z - b.mesh.position.z);
       b.mesh.visible = true;
       // Choose the sprite row the camera would see
@@ -659,7 +699,7 @@ export class Classroom3D {
       const row = DIRS.indexOf(view), col = POSES.indexOf(ch.pose);
       b.tex.offset.set(col / SHEET_COLS, 1 - (row + 1) / SHEET_ROWS);
       b.shadow.visible = !seated;
-      b.shadow.position.set(x, 0.01, z);
+      b.shadow.position.set(x, 0.01 + fy, z);
       // Emote bubbles mirror the 2D ones
       const em = ch.emote && ch.emote.visible ? ch.emote.texture.key : '';
       if (em) {

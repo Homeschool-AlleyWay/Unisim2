@@ -1,6 +1,6 @@
 // Renders the static school background (floors, walls, wall decorations) into one canvas.
 import { Ctx, hash, makeCanvas, pixelText, pixelTextCentered, px, rect, shade, box } from './pixel';
-import { Cell, FloorKind, MAP_H, MAP_W, ROOM_BY_ID, SchoolGrid, TILE } from '../data/schoolMap';
+import { Cell, FloorKind, MAP_H, MAP_W, ROOM_BY_ID, SchoolGrid, TIERS, TILE } from '../data/schoolMap';
 
 const isFloor = (c: Cell) => c !== 'wall';
 
@@ -303,6 +303,22 @@ function rug(ctx: Ctx, x1: number, y1: number, x2: number, y2: number, fill: str
   rect(ctx, X + 4, Y + 4, W - 8, 1, border); rect(ctx, X + 4, Y + H - 5, W - 8, 1, border);
 }
 
+/** Auditorium classrooms: each raised tier is a shade lighter (closer to the camera) and its
+ *  front lip gets a dark edge plus a bright nosing strip, so the rising rows read as steps. */
+function tiers(ctx: Ctx) {
+  for (const [roomId, rows] of Object.entries(TIERS)) {
+    const r = ROOM_BY_ID[roomId];
+    const X = r.x1 * TILE, W = (r.x2 - r.x1 + 1) * TILE;
+    for (const [a, b, level] of rows) {
+      const Y = a * TILE, H = (b - a + 1) * TILE;
+      rect(ctx, X, Y, W, H, `rgba(255,248,230,${0.07 * level})`);
+      rect(ctx, X, Y, W, 2, 'rgba(43,32,51,0.45)');
+      rect(ctx, X, Y + 2, W, 1, 'rgba(255,236,170,0.75)');
+      rect(ctx, X, Y + 3, W, 1, 'rgba(43,32,51,0.12)');
+    }
+  }
+}
+
 function courtLines(ctx: Ctx) {
   const X = 48 * 16 + 4, Y = 26 * 16 + 6, W = 12 * 16 - 8, H = 15 * 16 - 12;
   const L = '#fbf5ea';
@@ -365,10 +381,10 @@ export function renderBackground(grid: SchoolGrid): HTMLCanvasElement {
   roadMarks(ctx);
   // Rugs & floor art
   rug(ctx, 22, 27, 25, 40, '#b8464b', '#8a2f36');
-  rug(ctx, 8, 9, 11, 14, '#e2b25c', '#b98635');
   rug(ctx, 26, 9, 30, 15, '#c2a36b', '#9a7c47');
   rug(ctx, 33, 36, 40, 39, '#a58bc7', '#7c5ea6');
   courtLines(ctx);
+  tiers(ctx);
   shadows(ctx, grid);
 
   // ---- Classroom A (face rows 4-5)

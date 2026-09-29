@@ -926,7 +926,8 @@ export class SchoolScene extends Phaser.Scene {
     if (!t) return '';
     if (t.kind === 'npc') {
       const f = this.save.friendship[t.npc.person.id] ?? 0;
-      return `Talk to ${t.npc.person.name}${f ? ' ' + '♥'.repeat(Math.ceil(f / 2)) : ''}`;
+      const g = t.npc.person.grade ? ` (Grade ${t.npc.person.grade})` : '';
+      return `Talk to ${t.npc.person.name}${g}${f ? ' ' + '♥'.repeat(Math.ceil(f / 2)) : ''}`;
     }
     if (t.kind === 'seat') return t.seat.kind === 'stand' ? 'Take your spot' : 'Sit down';
     if (t.obj.interact === 'locker') return t.obj.tx === PLAYER_LOCKER_X ? 'Open your locker ★' : t.obj.label ?? 'Locker';
@@ -1301,7 +1302,7 @@ export class SchoolScene extends Phaser.Scene {
       if (!this.hasBooks) return { html: `Grab your books from <b>locker #${PLAYER_LOCKER_X} ★</b> in the hallway`, target: [PLAYER_LOCKER_X, 19] };
       if (per.kind === 'arrival' && !this.save.plan!.locked) return { html: 'Check the <b>bulletin board</b> in the lobby for today\'s picks', target: [23, 27] };
       const sub = this.currentClassSubject(per);
-      if (sub) return { html: `In class: <b>${SUBJECTS[sub].name}</b> with ${SUBJECTS[sub].teacher} — pay attention for pop quizzes!`, target: null };
+      if (sub) return { html: `In class: <b>${SUBJECTS[sub].name}</b> with ${SUBJECTS[sub].teacher} — all grades share this room; your board shows the <b>Grade ${this.save.schoolGrade}</b> lesson. Watch for pop quizzes!`, target: null };
       const remaining = this.save.plan!.selected.filter((x) => !this.save.plan!.completed.includes(x));
       if (!remaining.length) return { html: this.save.plan!.isTestDay ? 'All tests done — enjoy early dismissal!' : "Today's picked classes are all done! Explore or make friends.", target: null };
       return { html: `Head to one of today's classes: <b>${remaining.map((x) => SUBJECTS[x].name).join(', ')}</b> (check your picked time)`, target: null };
@@ -1317,7 +1318,7 @@ export class SchoolScene extends Phaser.Scene {
       const seat = this.playerClassSeat(slot);
       const roomName = ROOMS.find((r) => r.id === SUBJECTS[sub].room)!.name.split(' · ')[0];
       const inRoom = s && s.room === SUBJECTS[sub].room;
-      if (per.kind === 'class' && inRoom) return { html: `In class: <b>${SUBJECTS[sub].name}</b> with ${SUBJECTS[sub].teacher} — pay attention for pop quizzes!`, target: null };
+      if (per.kind === 'class' && inRoom) return { html: `In class: <b>${SUBJECTS[sub].name}</b> with ${SUBJECTS[sub].teacher} — all grades share this room; your board shows the <b>Grade ${this.save.schoolGrade}</b> lesson. Watch for pop quizzes!`, target: null };
       if (per.kind === 'class') return { html: `You're late! Hurry to <b>${SUBJECTS[sub].name}</b> → ${roomName}`, target: [seat.tx, seat.ty], seat };
       return inRoom ? { html: `Seated for <b>${SUBJECTS[sub].name}</b>. Bell at ${fmtTime(PERIODS[this.periodIndex].end)}`, target: null } : { html: `Next: <b>${SUBJECTS[sub].name}</b> → ${roomName} at ${fmtTime(PERIODS[this.periodIndex].end)}`, target: [seat.tx, seat.ty], seat };
     }

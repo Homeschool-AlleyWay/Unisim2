@@ -93,3 +93,23 @@ export function buildGrid(): SchoolGrid {
 export function roomContaining(x: number, y: number): Room | undefined {
   return ROOMS.find((r) => x >= r.x1 && x <= r.x2 && y >= r.y1 && y <= r.y2);
 }
+
+/** Auditorium-style subject classrooms: one room per subject, shared by every grade. Seating
+ *  rises in tiers from the teacher's stage at the front (level 0) toward the back of the room.
+ *  Rows are [firstRow, lastRow, level] in tile rows; everything in front of the first tier is the stage. */
+export const TIERS: Record<string, [number, number, number][]> = {
+  classA: [[9, 10, 1], [11, 12, 2], [13, 15, 3]],
+  lab: [[9, 10, 1], [11, 12, 2], [13, 15, 3]],
+  classB: [[28, 29, 1], [30, 32, 2]],
+};
+/** Height of one tier step in the 3D view (world units; 1 unit = 1 tile ≈ 1 m). */
+export const TIER_STEP = 0.32;
+
+/** Tier level (0 = floor/stage) of a tile, for the auditorium classrooms. */
+export function floorLevel(x: number, y: number): number {
+  const r = roomContaining(x, y);
+  const tiers = r && TIERS[r.id];
+  if (!tiers) return 0;
+  for (const [a, b, level] of tiers) if (y >= a && y <= b) return level;
+  return 0;
+}
