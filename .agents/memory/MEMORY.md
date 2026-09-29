@@ -1,2 +1,2 @@
-- [Phaser in React artifact](phaser-in-react-artifact.md) — pin phaser@^3 (bare add gives v4); HUD dialogs must register window listeners/timers for teardown on route change; broadcast = one shared canvas signal copied to all TVs.
+- [Phaser in React artifact](phaser-in-react-artifact.md) — pin phaser@^3; HUD dialog teardown; every screen needs an exit button; assembly airs once per real day.
 - [Supabase e2e testing](supabase-e2e-testing.md) — ~1 confirm email/hour; mail.tm inboxes work; presence track() every 0.35s gets rate-limited (student shows offline).

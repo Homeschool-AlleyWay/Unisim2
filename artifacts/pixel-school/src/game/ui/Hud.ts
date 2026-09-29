@@ -213,23 +213,34 @@ export class Hud {
     this.root.remove();
   }
 
-  private modal(bottom = false) {
+  /** Every dialog gets a ✕ exit button in its top-right corner. `onExit` decides what
+   *  leaving means for that screen (e.g. resume, play offline, skip the rest of a quiz).
+   *  The button lives in a frame around the panel so callers can freely reset `p.innerHTML`. */
+  private modal(bottom: boolean, onExit: () => void) {
     const m = el('div', 'msg-modal' + (bottom ? ' bottom' : ''));
+    const frame = el('div', 'msg-frame');
     const p = el('div', 'msg-panel');
-    m.appendChild(p);
+    const x = el('button', 'msg-x', '✕') as HTMLButtonElement;
+    x.title = 'Exit'; x.setAttribute('aria-label', 'Exit');
+    x.onclick = (e) => { e.stopPropagation(); Sfx.blip(); onExit(); };
+    frame.append(p, x);
+    m.appendChild(frame);
     this.root.appendChild(m);
     this.modalOpen++;
     for (const k of Object.keys(this.dirs) as DirKey[]) this.dirs[k] = false;
     const close = () => { if (m.parentNode) { m.remove(); this.modalOpen--; this.lastClose = performance.now(); } };
-    return { m, p, close };
+    return { m, frame, p, close };
   }
 
-  /** Speech box. Resolves with the index of the chosen option (0 when there are none). */
+  /** Speech box. Resolves with the index of the chosen option (0 when there are none).
+   *  Exiting (✕ or Escape) resolves with -1 when there were options to pick from. */
   say(who: string, text: string, options: string[] = [], color = '#3d6fb0'): Promise<number> {
     return new Promise((resolve) => {
-      const { m, p, close: closeModal } = this.modal(true);
+      const exit = () => { close(); resolve(options.length ? -1 : 0); };
+      const { m, frame, p, close: closeModal } = this.modal(true, () => exit());
       // Every exit path also drops the (possibly not-yet-armed) key listener.
       const close = () => { cancelArm(); offKey(); closeModal(); };
+      frame.classList.add('dialog');
       p.classList.add('msg-dialog');
       const w = el('div', 'who', who);
       w.style.background = color;
@@ -255,7 +266,7 @@ export class Hud {
       };
       p.appendChild(opts);
       const tick = () => {
-        if (done) return;
+        if (done || !m.parentNode) return;
         i += 2;
         txt.textContent = text.slice(0, i);
         if (i % 4 === 0) Sfx.talk();
@@ -265,6 +276,7 @@ export class Hud {
       m.addEventListener('pointerdown', (e) => { if (!done && e.target !== m) finish(); });
       const key = (e: KeyboardEvent) => {
         if (!m.parentNode) { close(); return; }
+        if (e.key === 'Escape') { e.preventDefault(); exit(); return; }
         if (['Enter', ' ', 'e', 'E'].includes(e.key)) {
           e.preventDefault();
           if (!done) finish();
@@ -282,7 +294,7 @@ export class Hud {
 
   panel(build: (p: HTMLElement, close: () => void) => void, bottom = false): Promise<void> {
     return new Promise((resolve) => {
-      const { p, close } = this.modal(bottom);
+      const { p, close } = this.modal(bottom, () => done());
       const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { done(); } };
       const done = () => { offEsc(); close(); resolve(); };
       const offEsc = this.onWindowKey(esc);
@@ -295,8 +307,11 @@ export class Hud {
    *  appear live to any other player. "Play offline" skips multiplayer entirely. */
   login(): Promise<{ userId: string | null }> {
     return new Promise(async (resolve) => {
-      const { signIn, signUp } = await import('../net/multiplayer');
-      const { p, close } = this.modal();
+      const { signIn, signUp, signOut } = await import('../net/multiplayer');
+      // Exiting the sign-in screen is the same as "Play offline".
+      let settled = false;
+      const finish = (userId: string | null) => { if (settled) return; settled = true; close(); resolve({ userId }); };
+      const { p, close } = this.modal(false, () => finish(null));
       let mode: 'signin' | 'signup' = 'signin';
       const render = () => {
         p.innerHTML = `<div class="msg-title">Maple Grove</div><h2>${mode === 'signin' ? 'Sign in' : 'Create an account'}</h2>
@@ -314,9 +329,11 @@ export class Hud {
           go.textContent = 'Please wait…'; go.disabled = true;
           try {
             const { data, error } = mode === 'signin' ? await signIn(email.value, pass.value) : await signUp(email.value, pass.value);
+            // Exited to offline play while this was in flight: don't leave a session behind.
+            if (settled) { if (data?.session) signOut().catch(() => {}); return; }
             if (error) { err.textContent = error.message; go.disabled = false; go.textContent = mode === 'signin' ? '▶ Sign in' : '▶ Create account'; return; }
             if (!data.session) { err.textContent = 'Check your email to confirm your account, then sign in.'; go.disabled = false; go.textContent = '▶ Sign in'; mode = 'signin'; return; }
-            close(); resolve({ userId: data.user?.id ?? null });
+            finish(data.user?.id ?? null);
           } catch (e: any) {
             err.textContent = 'Could not reach the server — playing offline instead.';
             go.disabled = false;
@@ -327,17 +344,18 @@ export class Hud {
         switchMode.onclick = () => { mode = mode === 'signin' ? 'signup' : 'signin'; render(); };
         const offline = el('button', 'msg-btn alt', '📵 Play offline (just me + NPCs)') as HTMLButtonElement;
         offline.style.width = '100%'; offline.style.marginTop = '6px'; offline.style.textAlign = 'center';
-        offline.onclick = () => { close(); resolve({ userId: null }); };
+        offline.onclick = () => finish(null);
         p.append(email, pass, err, go, switchMode, offline);
       };
       render();
     });
   }
 
-  /** New accounts pick which side of the family they're on. */
-  chooseRole(): Promise<'student' | 'parent'> {
+  /** New accounts pick which side of the family they're on. Exiting resolves null
+   *  (the caller signs out and goes back to the sign-in screen). */
+  chooseRole(): Promise<'student' | 'parent' | null> {
     return new Promise((resolve) => {
-      const { p, close } = this.modal();
+      const { p, close } = this.modal(false, () => { close(); resolve(null); });
       p.innerHTML = `<div class="msg-title">Maple Grove</div><h2>Who's signing in?</h2>
         <p>A parent account sees live activity and daily reports — no character or classes.</p>`;
       const studentBtn = el('button', 'msg-btn go', "🎒 I'm the student") as HTMLButtonElement;
@@ -367,7 +385,8 @@ export class Hud {
    *  window for each due subject and lock in at least half of them (more is fine — "get ahead"). */
   bulletinBoard(plan: DailyPlan): Promise<DailyPlan> {
     return new Promise((resolve) => {
-      const { p, close } = this.modal();
+      // Exiting leaves the plan unlocked; the scene reopens the board when the player tries to sit in class.
+      const { p, close } = this.modal(false, () => { close(); resolve(plan); });
       const need = minRequired(plan.due);
       const rows: Record<Subject, { picked: boolean; bucket: Bucket }> = {} as any;
       plan.due.forEach((s) => { rows[s] = { picked: plan.isTestDay, bucket: 'am' }; });
@@ -442,15 +461,18 @@ export class Hud {
   }
 
   // ---------- Character creator ----------
-  creator(existing: { name: string; look: Look; day: number; schoolGrade?: Grade } | null): Promise<{ name: string; look: Look; schoolGrade: Grade; fresh: boolean }> {
+  /** Resolves null when the player exits (the caller returns to the sign-in screen). */
+  creator(existing: { name: string; look: Look; day: number; schoolGrade?: Grade } | null): Promise<{ name: string; look: Look; schoolGrade: Grade; fresh: boolean } | null> {
     return new Promise((resolve) => {
-      const { p, close } = this.modal();
+      let stopPreview = () => {};
+      const { p, close } = this.modal(false, () => { stopPreview(); close(); resolve(null); });
       let look: Look = existing?.look ?? randomLook(Math.floor(Math.random() * 9999), { outfit: 'tee' });
       let name = existing?.name ?? 'Alex';
       let grade: Grade = existing?.schoolGrade ?? 5;
       if (existing) {
         p.innerHTML = `<div class="msg-title">Maple Grove</div><h2>School Life</h2><p>Welcome back, <b>${existing.name}</b>! Ready for day ${existing.day}?</p>`;
         const prev = this.previewCanvas(look);
+        stopPreview = prev.stop;
         const wrap = el('div', 'msg-prev'); wrap.appendChild(prev.canvas);
         p.appendChild(wrap);
         const go = el('button', 'msg-btn go', '▶ Continue') as HTMLButtonElement;
@@ -464,6 +486,7 @@ export class Hud {
       p.innerHTML = `<div class="msg-title">Maple Grove</div><h2>Create your student</h2>`;
       const wrap = el('div', 'msg-creator');
       const prev = this.previewCanvas(look);
+      stopPreview = prev.stop;
       const left = el('div', 'msg-prev');
       left.appendChild(prev.canvas);
       const nameIn = el('input', 'msg-name') as HTMLInputElement;
@@ -627,9 +650,9 @@ export class Hud {
         grid.addEventListener('pointerup', () => (down = false));
         const done = el('button', 'msg-btn go', 'Hang it on the wall') as HTMLButtonElement;
         done.style.width = '100%';
-        done.onclick = () => { close(); resolve(strokes); };
+        done.onclick = close;
         p.append(pal, grid, done);
-      });
+      }).then(() => resolve(strokes)); // also settles on ✕ / Escape
     });
   }
 
@@ -674,8 +697,10 @@ export class Hud {
     });
   }
 
+  /** Resolves with the result text, or '' if the player left before finishing. */
   experiment(): Promise<string> {
     return new Promise((resolve) => {
+      let result = '';
       this.panel((p, close) => {
         p.innerHTML = '<h2>🧪 Lab experiment</h2><p>Mix two solutions. Safety goggles on!</p>';
         const chems = [['Blue', '#4f86d9'], ['Yellow', '#f2c94c'], ['Red', '#e2544a'], ['Clear', '#dff4fb']];
@@ -700,14 +725,14 @@ export class Hud {
               Sfx.good();
               const done = el('button', 'msg-btn go', 'Write it in my lab notebook') as HTMLButtonElement;
               done.style.width = '100%';
-              done.onclick = () => { close(); resolve(r); };
+              done.onclick = () => { result = r; close(); };
               p.appendChild(done);
             }
           };
           row.appendChild(b);
         });
         p.append(row, out);
-      });
+      }).then(() => resolve(result)); // also settles on ✕ / Escape
     });
   }
 }

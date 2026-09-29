@@ -14,3 +14,7 @@ description: Gotchas from embedding a user-supplied Phaser 3 game (with a DOM-ba
 The morning broadcast picture is rendered once (BroadcastScreen) and copied to every TV: Phaser CanvasTexture (use the pre-downscaled small canvas + LINEAR filter, and refresh() after each draw), a DOM picture-in-picture, and the three.js classroom TV. Rendering is throttled and skipped when no TV is on screen.
 **Why:** the user asked for the broadcast to look like a real TV playing in the world rather than a blocking overlay; a 480x270 canvas sampled with NEAREST at ~8x downscale shimmers badly, so downscale in 2D first.
 **How to apply:** if the user drops a new game zip, re-wire BroadcastPlayer/BroadcastScreen + the hallway wall TV (tiles.ts HALL_TV, furniture locker-marker skip list, SchoolScene tick/onFrame, Classroom3D.setTVFrame) along with the other lifecycle fixes.
+
+## User product rules (confirmed 2026-09-29)
+- Every game screen/dialog must have a visible exit (✕) button. **Why:** user request. **How to apply:** new Hud dialogs go through modal(bottom, onExit); pick a non-blocking exit meaning (skip, resume, back to sign-in).
+- The mandatory morning assembly airs once per real calendar day per device (localStorage date); later game days/app opens skip to the news loop and must not gate class seats. **Why:** user did not want it to stop the player every time.

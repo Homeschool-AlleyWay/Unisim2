@@ -20,6 +20,19 @@ const ANCHOR_LOOKS: Look[] = [
   { skin: '#f1c29e', hair: '#7a4a2a', hairStyle: 'long', shirt: '#e874a8', pants: '#2d2a33', shoes: '#2d2a33', outfit: 'blazer', glasses: false, eyeColor: '#3f7d6e' },
 ];
 
+// The morning-assembly segment airs once per real calendar day on this device. Reopening the
+// app or starting another in-game day on the same date skips straight to the news loop.
+const MANDATORY_SEEN_KEY = 'mg-broadcast-mandatory-date';
+function localDateKey(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+export function mandatorySeenToday(): boolean {
+  try { return localStorage.getItem(MANDATORY_SEEN_KEY) === localDateKey(); } catch { return false; }
+}
+export function markMandatorySeen() {
+  try { localStorage.setItem(MANDATORY_SEEN_KEY, localDateKey()); } catch { /* storage unavailable */ }
+}
+
 /** Frames per second the signal is redrawn at while at least one TV is showing it. */
 const SIGNAL_FPS = 15;
 
@@ -52,6 +65,8 @@ export class BroadcastPlayer {
   private pipLabel: HTMLDivElement;
   private pipVisible = false;
   private pipBig = false;
+  /** Closed with its ✕; stays hidden until the player leaves the hallway/lobby and comes back. */
+  private pipDismissed = false;
   /** Set by the scene when the wall TV is on camera or a 3D TV is up, so the signal keeps rendering. */
   worldViewers = 0;
   private lastRender = 0;
@@ -76,7 +91,11 @@ export class BroadcastPlayer {
     this.pipCtx = this.pipCanvas.getContext('2d')!;
     this.pipLabel = el('div', '', 'Tap to enlarge') as HTMLDivElement;
     this.pipLabel.style.cssText = 'position:absolute;left:50%;top:5px;transform:translateX(-50%);padding:2px 8px;border-radius:999px;font:700 8px "Nunito",sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#cfd3e8;background:rgba(0,0,0,.55);white-space:nowrap;pointer-events:none;';
-    this.pip.append(this.pipCanvas, this.pipLabel);
+    const pipX = el('button', '', '✕') as HTMLButtonElement;
+    pipX.title = 'Close'; pipX.setAttribute('aria-label', 'Close hallway TV');
+    pipX.style.cssText = 'position:absolute;top:4px;right:4px;width:24px;height:24px;border-radius:50%;border:2px solid #cfd3e8;background:rgba(0,0,0,.65);color:#fff;font:800 12px/1 "Nunito",sans-serif;display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;';
+    pipX.addEventListener('click', (e) => { e.stopPropagation(); this.pipDismissed = true; this.setViewerVisible(true); });
+    this.pip.append(this.pipCanvas, this.pipLabel, pipX);
     this.pip.addEventListener('click', () => { this.pipBig = !this.pipBig; this.layoutPip(); });
     this.parent.appendChild(this.pip);
     window.addEventListener('resize', this.onResize);
@@ -100,13 +119,15 @@ export class BroadcastPlayer {
   }
 
   /** Show/hide the pocket TV (the scene calls this when the player is in the hallway/lobby). */
-  setViewerVisible(v: boolean) {
+  setViewerVisible(inHall: boolean) {
+    if (!inHall) this.pipDismissed = false;
+    const v = inHall && !this.pipDismissed;
     this.pipVisible = v;
     this.pip.style.display = v ? 'block' : 'none';
     if (!v) {
       this.pipBig = false; this.layoutPip();
       // Leaving the hall mid-story: stop the news narration (the assembly keeps playing).
-      if (!this.mandatoryRunning) { try { speechSynthesis?.cancel(); } catch { /* no-op */ } }
+      if (!inHall && !this.mandatoryRunning) { try { speechSynthesis?.cancel(); } catch { /* no-op */ } }
     }
   }
   /** Kept for callers that used the old ticker API. */
@@ -158,13 +179,14 @@ export class BroadcastPlayer {
   private setCaption(text: string) { this.screen.state.caption = text; }
 
   private async say(idx: 0 | 1, text: string, caption?: string) {
+    if (this.cancelled) return;
     this.setCaption(caption ?? text);
     await this.speak(idx, text);
     if (this.cancelled) return;
     await this.wait(180);
   }
 
-  cancel() { this.cancelled = true; try { speechSynthesis?.cancel(); } catch { /* no-op */ } }
+  cancel() { this.cancelled = true; this.pendingLoop = null; try { speechSynthesis?.cancel(); } catch { /* no-op */ } }
 
   /** The morning-assembly segment. Resolves once it's fully played. Plays on the TVs;
    *  the caller decides what (if anything) is gated on it finishing. */
@@ -193,17 +215,21 @@ export class BroadcastPlayer {
     await this.say(0, `Good morning, students and faculty of ${SCHOOL_NAME}!`);
     await this.say(1, `Great to see you all — let's get today started right.`);
 
+    if (this.cancelled) return;
     this.showSlide('📅', "Today's Date", dateStr);
     await this.say(0, `Today is ${dateStr}.`);
 
+    if (this.cancelled) return;
     this.showSlide(w.icon, 'Weather', `${w.label}, high of ${w.hi}° and a low of ${w.lo}°.`);
     await this.say(1, `Here's your weather: ${w.label.toLowerCase()}, with a high of ${w.hi} degrees and a low around ${w.lo}.`);
 
+    if (this.cancelled) return;
     this.showSlide('🏫', 'Our Motto', SCHOOL_MOTTO);
     await this.say(0, `Our school motto: ${SCHOOL_MOTTO}`);
     this.showSlide('🤝', 'Our Promise', SCHOOL_PROMISE);
     await this.say(1, `And our promise to you: ${SCHOOL_PROMISE}`);
 
+    if (this.cancelled) return;
     this.showSlide('🇺🇸', 'Pledge of Allegiance', 'Please stand and join us.');
     await this.say(0, 'Please stand for the Pledge of Allegiance.');
     const anthemSec = Sfx.playMelody(ANTHEM_MELODY, 96, 0.05);
@@ -212,8 +238,9 @@ export class BroadcastPlayer {
       await this.speak(0, line);
       if (this.cancelled) break;
     }
-    await this.wait(Math.max(0, anthemSec * 1000 - PLEDGE_LINES.join(' ').length * 40));
+    if (!this.cancelled) await this.wait(Math.max(0, anthemSec * 1000 - PLEDGE_LINES.join(' ').length * 40));
 
+    if (this.cancelled) return;
     this.showSlide('🙏', "The Lord's Prayer", 'Please bow your heads.');
     for (const line of LORDS_PRAYER_LINES) {
       this.setCaption(line);
@@ -221,6 +248,7 @@ export class BroadcastPlayer {
       if (this.cancelled) break;
     }
 
+    if (this.cancelled) return;
     this.showSlide('🔔', 'Classes Starting Soon', 'Grab your backpack and 2-way from your locker, then head to class!');
     await this.say(0, `That's it for now — classes are starting soon! Grab your backpack and your 2-way from your locker, then head on to class.`);
     Sfx.stopHallwayAmbience();

@@ -42,6 +42,12 @@ export const CSS = `
 .msg-panel h3{margin:10px 0 4px;font-size:16px}
 .msg-panel p{margin:4px 0;font-size:15px;line-height:1.35}
 .msg-dialog{max-width:620px}
+.msg-frame{position:relative;display:flex;flex-direction:column;width:100%;max-width:560px;max-height:calc(100% - 10px)}
+.msg-frame.dialog{max-width:620px}
+.msg-frame>.msg-panel{max-width:none;max-height:none;min-height:0;flex:0 1 auto}
+.msg-x{position:absolute;top:-11px;right:-11px;z-index:2;width:34px;height:34px;border-radius:50%;border:3px solid #2b2033;background:#fff8ec;color:#2b2033;font:800 16px/1 'Nunito',sans-serif;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 0 #2b2033;cursor:pointer;padding:0}
+.msg-x:hover{background:#ffd84d}
+.msg-x:active{transform:translateY(2px);box-shadow:0 1px 0 #2b2033}
 .msg-dialog .who{display:inline-block;background:#3d6fb0;color:#fff;border:2px solid #2b2033;border-radius:8px;padding:1px 8px;font-weight:700;font-size:14px;margin-bottom:6px}
 .msg-dialog .txt{font-size:17px;line-height:1.35;min-height:44px}
 .msg-opts{display:flex;flex-direction:column;gap:6px;margin-top:10px}

@@ -17,9 +17,9 @@ import { clearSave, DAY_NAMES, HomeworkItem, letter, loadSave, newSave, SaveData
 import { Hud } from '../ui/Hud';
 import { Classroom3D, CLASS_ROOMS } from '../three/Classroom3D';
 import { getLesson, Lesson } from '../data/curriculum';
-import { Presence, PresenceState, upsertProfile, fetchProfile, getOrCreateFamilyCode, fetchDailyReports, upsertDailyReport, parentGateStatus } from '../net/multiplayer';
+import { Presence, PresenceState, upsertProfile, fetchProfile, getOrCreateFamilyCode, fetchDailyReports, upsertDailyReport, parentGateStatus, signOut } from '../net/multiplayer';
 import { ParentDashboard } from '../systems/ParentDashboard';
-import { BroadcastPlayer } from '../systems/BroadcastPlayer';
+import { BroadcastPlayer, mandatorySeenToday, markMandatorySeen } from '../systems/BroadcastPlayer';
 
 /** Pop quizzes: at most this many per class period, always exactly 5 questions. */
 const MAX_POP_QUIZZES_PER_CLASS = 2;
@@ -97,6 +97,8 @@ export class SchoolScene extends Phaser.Scene {
   broadcastStarted = false;
   broadcastMandatoryDone = false;
   broadcastNewsStarted = false;
+  /** Bumped by startDay() so a finishing assembly from an earlier day is ignored. */
+  broadcastDayToken = 0;
 
   // Parent-report activity signals (Phase 2) — reset each day in startDay()
   activityIdleSeconds = 0;
@@ -349,7 +351,7 @@ export class SchoolScene extends Phaser.Scene {
   }
 
   // ---------------- Game flow ----------------
-  private async showTitle() {
+  private async showTitle(): Promise<void> {
     const existing = loadSave();
     const login = await this.hud.login();
     this.userId = login.userId;
@@ -362,6 +364,7 @@ export class SchoolScene extends Phaser.Scene {
       } else {
         const role = await this.hud.chooseRole();
         if (this.tornDown) return;
+        if (role === null) return this.backToSignIn();
         if (role === 'parent') {
           await upsertProfile(this.userId, existing?.name || 'Parent', 1, existing?.look ?? randomLook(Math.floor(Math.random() * 9999)), 'parent').catch(() => {});
           if (this.tornDown || !this.userId) return;
@@ -372,6 +375,8 @@ export class SchoolScene extends Phaser.Scene {
     }
 
     const res = await this.hud.creator(existing ? { name: existing.name, look: existing.look, day: existing.day, schoolGrade: existing.schoolGrade } : null);
+    if (this.tornDown) return;
+    if (!res) return this.backToSignIn();
     this.save = !res.fresh && existing ? existing : newSave(res.name, res.look, res.schoolGrade);
     this.addCharTexture('char_player', this.save.look);
     this.player.destroy();
@@ -386,6 +391,13 @@ export class SchoolScene extends Phaser.Scene {
       await this.hud.say('Principal Grant', `Welcome to Maple Grove School, ${this.save.name}! You're in homeroom A. Grab your books from your locker (look for the gold ★), then find your seat in Math before the 8:00 bell.`, [], '#3b3f58');
       await this.hud.say('Tip', 'Follow the yellow arrow to your next goal. Tap the map button to see the whole school and your schedule. Talk to everyone — friendships grow each day!', [], '#6b4fa0');
     }
+  }
+
+  /** Exit from the role chooser / character creator: sign out (if signed in) and start over at sign-in. */
+  private async backToSignIn(): Promise<void> {
+    if (this.userId) { this.userId = null; await signOut().catch(() => {}); }
+    if (this.tornDown) return;
+    return this.showTitle();
   }
 
   /** A parent account never enters the game world — it only sees the oversight dashboard. */
@@ -417,9 +429,12 @@ export class SchoolScene extends Phaser.Scene {
     this.record = { attended: 0, late: 0, missed: 0, quizRight: 0, quizTotal: 0 };
     this.cooldowns.clear(); this.talked.clear(); this.dayLog = [];
     this.onBus = false; this.busCalled = false; this.dayOver = false; this.fastForward = false;
+    this.broadcast.cancel(); // a new day never inherits yesterday's assembly
     this.broadcast.stopNewsLoop();
+    this.broadcastDayToken++;
     this.broadcastStarted = false;
-    this.broadcastMandatoryDone = false;
+    // Already aired today (real date)? Then nothing waits on it — class seats are open right away.
+    this.broadcastMandatoryDone = mandatorySeenToday();
     this.broadcastNewsStarted = false;
     this.activityIdleSeconds = 0; this.activityQuestionsAsked = 0; this.activitySocialInteractions = 0; this.activityOffAppSeconds = 0; this.offAppSince = 0;
     if (this.save.schoolGrade >= 6) {
@@ -807,11 +822,22 @@ export class SchoolScene extends Phaser.Scene {
       this.broadcast.setViewerVisible(rid === 'hallway' || rid === 'lobby');
       if ((rid === 'hallway' || rid === 'lobby') && !this.broadcastStarted) {
         this.broadcastStarted = true;
-        this.broadcast.playMandatory(this.save.name).then(async () => {
+        const inHall = () => this.currentRoom === 'hallway' || this.currentRoom === 'lobby';
+        if (mandatorySeenToday()) {
+          // The assembly only airs once per real day — go straight to the looping news show.
           this.broadcastMandatoryDone = true;
-          if (this.isSelfPaced() && !this.save.plan!.locked) await this.goToBulletinBoard();
-          this.hud.toast('🔔 Classes starting soon! Grab your backpack & 2-way, then head to class.');
-        });
+          if (!this.broadcastNewsStarted) { this.broadcastNewsStarted = true; this.broadcast.startNewsLoop(this.save.day, inHall); }
+          if (this.isSelfPaced() && !this.save.plan!.locked) void this.goToBulletinBoard();
+        } else {
+          markMandatorySeen(); // marked at the start so reopening mid-assembly doesn't replay it
+          const token = this.broadcastDayToken;
+          this.broadcast.playMandatory(this.save.name).then(async () => {
+            if (this.tornDown || token !== this.broadcastDayToken) return;
+            this.broadcastMandatoryDone = true;
+            if (this.isSelfPaced() && !this.save.plan!.locked) await this.goToBulletinBoard();
+            this.hud.toast('🔔 Classes starting soon! Grab your backpack & 2-way, then head to class.');
+          });
+        }
       }
     }
   }
@@ -951,6 +977,12 @@ export class SchoolScene extends Phaser.Scene {
         }
         const sub = subjectForRoom(s.room);
         const plan = this.save.plan!;
+        if (!plan.locked) {
+          // They closed the bulletin board without picking — ask again now.
+          this.save.plan = await this.hud.bulletinBoard(plan);
+          writeSave(this.save);
+          if (!plan.locked) return;
+        }
         if (!sub || !plan.selected.includes(sub)) {
           this.hud.toast(`📌 ${sub ? SUBJECTS[sub].name : 'This class'} isn't on your schedule today — check the bulletin board.`);
           return;
@@ -998,6 +1030,7 @@ export class SchoolScene extends Phaser.Scene {
       }
       case 'experiment': {
         const r = await this.hud.experiment();
+        if (!r) break; // left before mixing
         this.dayLog.push(r);
         if (this.once('lab')) { this.gain('smarts', 2); if (per.kind === 'class' && this.playerSubject(per.slot!) === 'science') this.save.grades.science = Math.min(100, this.save.grades.science + 1); }
         break;
@@ -1131,6 +1164,7 @@ export class SchoolScene extends Phaser.Scene {
       this.refreshBoard({ q: q.q, options: q.choices, n: i + 1, total: picks.length });
       const intro = i === 0 ? (volunteered ? `Yes, ${this.save.name}? Great — here's a 5-question pop quiz:` : `Pop quiz, ${this.save.name}! (${picks.length} questions)`) : `Question ${i + 1} of ${picks.length}:`;
       const k = await this.hud.say(teacher, `${intro} ${q.q}`, q.choices.map((o, j) => `${j + 1}. ${o}`), '#c0504d');
+      if (k < 0) { this.record.quizTotal += picks.length - i; break; } // exited: the rest count as missed
       this.record.quizTotal++;
       if (k === q.correct) { right++; this.record.quizRight++; Sfx.good(); this.player.showEmote('star'); }
       else Sfx.bad();
@@ -1153,6 +1187,7 @@ export class SchoolScene extends Phaser.Scene {
       const q = lesson.test[i];
       this.refreshBoard({ q: q.q, options: q.choices, n: i + 1, total: lesson.test.length });
       const k = await this.hud.say(teacher, `Unit test — question ${i + 1} of ${lesson.test.length}: ${q.q}`, q.choices.map((o, j) => `${j + 1}. ${o}`), '#3d6fb0');
+      if (k < 0) break; // exited: unanswered questions count as wrong
       if (k === q.correct) right++;
     }
     const pct = right / lesson.test.length;
@@ -1204,15 +1239,17 @@ export class SchoolScene extends Phaser.Scene {
     if (path && path.length) {
       this.autoPath = path;
       await new Promise<void>((resolve) => {
-        const check = () => { if (!this.autoPath.length) resolve(); else setTimeout(check, 100); };
+        const check = () => { if (this.tornDown || !this.autoPath.length) resolve(); else setTimeout(check, 100); };
         check();
       });
     }
+    if (this.tornDown) return;
     this.player.setPos(bx * TILE + 8, by * TILE + 13);
     this.player.face('up');
     const plan = await this.hud.bulletinBoard(this.save.plan!);
     this.save.plan = plan;
     writeSave(this.save);
+    if (!plan.locked) this.hud.toast("📌 No classes picked yet — you'll be asked again when you try to sit in class.");
   }
 
   /** A special Saturday that replaces the normal school day: 30-minute review sessions in the
@@ -1236,6 +1273,7 @@ export class SchoolScene extends Phaser.Scene {
       for (let i = 0; i < count; i++) {
         const q = bank[i];
         const k = await this.hud.say(teacher, `Review ${i + 1}/${count}: ${q.q}`, q.choices.map((o, j) => `${j + 1}. ${o}`), '#6b4fa0');
+        if (k < 0) break; // exited this review
         if (k === q.correct) right++;
       }
       this.save.grades[sub] = Math.min(100, this.save.grades[sub] + 3);
