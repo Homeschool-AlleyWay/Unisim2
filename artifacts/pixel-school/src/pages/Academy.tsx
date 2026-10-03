@@ -24,7 +24,7 @@ export default function Academy() {
         title="UNIFY Academy"
         src={`${import.meta.env.BASE_URL}academy/index.html`}
         className="h-full w-full border-0"
-        allow="fullscreen"
+        allow="fullscreen; geolocation; autoplay"
       />
     </main>
   );
