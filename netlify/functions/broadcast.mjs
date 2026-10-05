@@ -19,9 +19,26 @@ const WORLD = [
   { name: 'Al Jazeera', url: 'https://www.aljazeera.com/xml/rss/all.xml' }, { name: 'DW', url: 'https://rss.dw.com/rdf/rss-en-all' }, { name: 'France 24', url: 'https://www.france24.com/en/rss' },
   { name: 'NPR World', url: 'https://feeds.npr.org/1004/rss.xml' }, { name: 'The Guardian World', url: 'https://www.theguardian.com/world/rss' }, { name: 'UN News', url: 'https://news.un.org/feed/subscribe/en/news/all/rss.xml' },
 ];
+/* Classroom news resources by grade band. Feeds are read when the site publishes one; every resource also shows as a link in the newsroom. */
+const EDU = {
+  k5: [
+    { name: 'DOGOnews', url: 'https://www.dogonews.com/rss', feed: true, link: 'https://www.dogonews.com/', why: 'Kid-friendly news articles, videos and activities' },
+    { name: 'PBS KIDS', url: 'https://www.pbs.org/parents/feed', feed: true, link: 'https://pbskids.org/', why: 'Videos, games and activities for young learners' },
+  ],
+  ms: [
+    { name: 'CNN 10', url: 'http://rss.cnn.com/services/podcasting/cnn10/rss.xml', feed: true, link: 'https://www.cnn.com/cnn10', why: 'Ten-minute news videos for students' },
+    { name: 'PBS NewsHour Classroom', url: 'https://www.pbs.org/newshour/classroom/feed', feed: true, link: 'https://www.pbs.org/newshour/classroom', why: 'News lessons with discussion questions' },
+  ],
+  hs: [
+    { name: 'PBS NewsHour Classroom', url: 'https://www.pbs.org/newshour/classroom/feed', feed: true, link: 'https://www.pbs.org/newshour/classroom', why: 'Current events lessons and media literacy' },
+    { name: 'PBS Student Reporting Labs', url: 'https://studentreportinglabs.org/feed/', feed: true, link: 'https://studentreportinglabs.org/', why: 'Student journalism and media-literacy resources' },
+  ],
+};
+const band = g => (g <= 5 ? 'k5' : g <= 8 ? 'ms' : 'hs');
+const EDU_NAMES = new Set(Object.values(EDU).flat().map(x => x.name));
 const KIDS = [{ name: 'BBC Newsround', url: 'https://feeds.bbci.co.uk/newsround/rss.xml' }];
 /** feeds for a place + edition. `when:` narrows Google News searches to the edition's time window. */
-function feedsFor(place, edition, kids) {
+function feedsFor(place, edition, kids, g = 6) {
   const cc = place.cc || 'US', when = edition === 'am' ? 'when:1d' : 'when:12h', where = [place.name, place.admin].filter(Boolean).join(', ');
   const local = [
     { name: 'Local news', url: GN(`/headlines/section/geo/${enc(where)}`, cc), splitSource: true },
@@ -30,7 +47,8 @@ function feedsFor(place, edition, kids) {
   ];
   const national = kids ? [...KIDS] : [{ name: 'Top stories', url: GN('', cc), splitSource: true }, ...GN_TOPICS.map(t => ({ name: t.toLowerCase(), url: GN(`/headlines/section/topic/${t}`, cc), splitSource: true })), ...(cc === 'US' ? US_NATIONAL : [])];
   const world = kids ? [...KIDS] : [{ name: 'World', url: GN('/headlines/section/topic/WORLD', cc), splitSource: true }, ...WORLD];
-  return { local, national, world };
+  const edu = EDU[band(g)].filter(x => x.feed).map(x => ({ name: x.name, url: x.url }));
+  return { local, national: [...edu, ...national], world };
 }
 
 /* ---------- Helpers ---------- */
@@ -150,17 +168,17 @@ async function build(o) {
   const tz = o.tz || place.tz, edition = o.edition === 'am' || o.edition === 'pm' ? o.edition : editionNow(tz), win = windowHours(edition, tz);
   const key = `${place.name}|${place.admin}|${place.cc}|${edition}|${g <= 5 ? 'k5' : g <= 8 ? 'ms' : 'hs'}|${Math.floor(Date.now() / CACHE_MS)}`;
   const hit = cache.get(key); if (hit) return withLimit(hit, o.limit);
-  const f = feedsFor(place, edition, kids), all = a => Promise.all(a.map(readFeed)).then(r => r.flat());
+  const f = feedsFor(place, edition, kids, g), all = a => Promise.all(a.map(readFeed)).then(r => r.flat());
   const [wx, loc, nat, wor] = await Promise.all([weather(place).catch(() => []), all(f.local), all(f.national), all(f.world)]);
   const L = selectTier(loc.filter(i => localScore(i) > -4), g, win, 8), N = selectTier(nat, g, win, 12), Wd = selectTier(wor.filter(w => !nat.some(n => norm(n.title) === norm(w.title))), g, win, 12);
   const chosen = [...L.items.map(i => ({ ...i, tier: 'local' })), ...N.items.map(i => ({ ...i, tier: 'national' })), ...Wd.items.map(i => ({ ...i, tier: 'world' }))];
   const ai = await llmCopy(chosen, g === 0 ? 'K' : g);
   const stories = chosen.map((s, idx) => {
     const c = (ai && ai.find(x => x.id === idx)) || plainCopy(s);
-    return { id: createHash(s.link || s.title), tier: s.tier, headline: s.title, source: s.source, link: s.link, published: s.date.toISOString(), snippet: s.snippet.slice(0, 280), intro: c.intro, vo: (c.vo || []).slice(0, 3), place: s.tier === 'local' ? [place.name, place.admin].filter(Boolean).join(', ') : undefined };
+    return { id: createHash(s.link || s.title), tier: s.tier, edu: EDU_NAMES.has(s.source), headline: s.title, source: s.source, link: s.link, published: s.date.toISOString(), snippet: s.snippet.slice(0, 280), intro: c.intro, vo: (c.vo || []).slice(0, 3), place: s.tier === 'local' ? [place.name, place.admin].filter(Boolean).join(', ') : undefined };
   });
   const lp = localParts(tz), data = { generatedAt: new Date().toISOString(), place: [place.name, place.admin].filter(Boolean).join(', '), country: place.country, cc: place.cc, lat: place.lat, lon: place.lon, tz: tz || 'UTC', grade: g, edition,
-    editionLabel: `${edition === 'am' ? 'Morning' : 'Evening'} edition`, localDate: `${lp.weekday}, ${lp.month} ${lp.day}`, windowHours: Math.round(Math.max(L.hours, N.hours, Wd.hours)), llm: !!ai, weather: wx, stories,
+    editionLabel: `${edition === 'am' ? 'Morning' : 'Evening'} edition`, localDate: `${lp.weekday}, ${lp.month} ${lp.day}`, windowHours: Math.round(Math.max(L.hours, N.hours, Wd.hours)), llm: !!ai, weather: wx, resources: EDU[band(g)].map(({ name, link, why }) => ({ name, link, why })), stories,
     local: stories.filter(s => s.tier === 'local'), national: stories.filter(s => s.tier === 'national'), world: stories.filter(s => s.tier === 'world') };
   cache.set(key, data); if (cache.size > 40) cache.delete(cache.keys().next().value); return withLimit(data, o.limit);
 }
@@ -191,6 +209,10 @@ const chatAllowed = ip => { const now = Date.now(), a = (chatHits.get(ip) || [])
 function mockResponse(url) {
   const now = Date.now(), H = 3600e3, rss = items => `<?xml version="1.0"?><rss><channel>${items.map(([t, d, h]) => `<item><title>${t}</title><link>https://example.com/${encodeURIComponent(t).slice(0, 40)}</link><description>${d}</description><pubDate>${new Date(now - h * H).toUTCString()}</pubDate></item>`).join('')}</channel></rss>`;
   const u = new URL(url);
+  if (u.hostname === 'en.wikipedia.org') { const q = u.searchParams.get('srsearch') || 'topic'; return { ok: true, json: async () => ({ query: { search: [{ title: q[0].toUpperCase() + q.slice(1), snippet: `An overview of <span>${q}</span> for students.` }, { title: `History of ${q}`, snippet: `How ${q} developed over time.` }] } }) }; }
+  if (u.hostname === 'openlibrary.org') return { ok: true, json: async () => ({ docs: [{ title: 'A First Book of Learning', key: '/works/OL1W', author_name: ['A. Teacher'], first_publish_year: 1999 }] }) };
+  if (u.hostname === 'gutendex.com') return { ok: true, json: async () => ({ results: [{ id: 11, title: "Alice's Adventures in Wonderland", authors: [{ name: 'Carroll, Lewis' }] }] }) };
+  if (u.hostname === 'www.gutenberg.org') return { ok: true, text: async () => 'Title: A Short Test Book\n\n*** START OF THE PROJECT GUTENBERG EBOOK ***\nCHAPTER I\n\nA small fox lived near the river. "Hello," said the Fox. He walked along the road to the village and met a friendly Crow.\n\nCHAPTER II\n\nThe Crow showed the Fox a shiny stone. The Fox laughed and took it home.\n*** END OF THE PROJECT GUTENBERG EBOOK ***' };
   if (u.hostname.startsWith('geocoding-api')) return { ok: true, json: async () => ({ results: [{ name: u.searchParams.get('name'), admin1: 'Georgia', country_code: 'US', country: 'United States', latitude: 33.75, longitude: -84.39, timezone: 'America/New_York' }] }) };
   if (u.hostname.startsWith('api.bigdatacloud')) return { ok: true, json: async () => ({ city: 'Decatur', principalSubdivisionCode: 'US-GA', principalSubdivision: 'Georgia', countryCode: 'US', countryName: 'United States' }) };
   if (u.hostname.startsWith('api.open-meteo')) { const one = { daily: { weather_code: [2], temperature_2m_max: [71], wind_speed_10m_max: [9], precipitation_probability_max: [20] } }; return { ok: true, json: async () => [one, one, one, one] }; }
@@ -201,6 +223,43 @@ function mockResponse(url) {
   const W = [['Japan launches new high speed train line', 'The line connects two major cities in under an hour.', 4], ['Floods hit northern India as monsoon arrives early', 'Rescue teams moved families to shelters.', 3], ['Brazil celebrates restored rainforest corridor', 'Conservationists planted a million trees over five years.', 6], ['European leaders meet in Brussels to discuss climate goals', 'Talks focused on clean energy and public transport.', 5], ['Kenya runner breaks marathon record in Berlin', 'The new time is two minutes faster than last year.', 7], ['Australia opens world largest marine reserve expansion', 'The protected waters are home to coral and sea turtles.', 11], ['Egypt museum shows newly found ancient artifacts', 'Visitors can see gold masks and papyrus scrolls.', 9]];
   const src = tier === 'local' ? L : tier === 'world' ? W : N, rot = seed % src.length; const items = [...src.slice(rot), ...src.slice(0, rot)].map(([t, d, h], i) => [`${t}${u.hostname.includes('google') ? ' - ' + ['Daily Courier', 'City Herald', 'Metro Times'][i % 3] : ''}`, d, h + (seed % 3)]);
   return { ok: true, text: async () => rss(items) };
+}
+
+
+/* ---------- Alleyway: a restricted, education-only search, and book text import ---------- */
+const ALLOW = ['wikipedia.org', 'wikisource.org', 'wikibooks.org', 'wikimedia.org', 'openstax.org', 'ck12.org', 'khanacademy.org', 'nasa.gov', 'si.edu', 'loc.gov', 'archive.org', 'gutenberg.org', 'openlibrary.org',
+  'standardebooks.org', 'pbs.org', 'pbslearningmedia.org', 'pbskids.org', 'studentreportinglabs.org', 'dogonews.com', 'cnn.com', 'storylineonline.net', 'oxfordowl.co.uk', 'uniteforliteracy.com', 'bookspring.org',
+  'africanstorybook.org', 'overdrive.com', 'manybooks.net', 'kids.nationalgeographic.com', 'kids.britannica.com', 'nps.gov', 'noaa.gov', 'usa.gov', 'congress.gov', 'archives.gov', 'mathsisfun.com', 'edu', 'gov', 'k12.us'];
+const hostOk = u => { try { const h = new URL(u).hostname.replace(/^www\./, ''); return ALLOW.some(d => h === d || h.endsWith('.' + d)); } catch { return false; } };
+const BLOCK = /\b(porn|xxx|sex|nude|naked|gambl|casino|betting|drugs?|weed|vape|cigarette|alcohol|beer|gore|kill (?:myself|people)|suicide|how to (?:hack|steal|cheat)|buy (?:a )?gun|weapon|essay mill|homework answers|dating)\b/i;
+const SITES = [
+  ['OpenStax', 'Free textbooks', q => `https://openstax.org/search?q=${enc(q)}`], ['CK-12', 'Free digital lessons', q => `https://www.ck12.org/search/?q=${enc(q)}`],
+  ['Khan Academy', 'Lessons and practice', q => `https://www.khanacademy.org/search?page_search_query=${enc(q)}`], ['NASA', 'Space and Earth science', q => `https://www.nasa.gov/?s=${enc(q)}`],
+  ['Smithsonian', 'Collections and learning', q => `https://www.si.edu/search?edan_q=${enc(q)}`], ['Library of Congress', 'Primary sources', q => `https://www.loc.gov/search/?q=${enc(q)}`],
+  ['PBS LearningMedia', 'Classroom videos', q => `https://www.pbslearningmedia.org/search/?q=${enc(q)}`], ['Internet Archive', 'Books and media to read', q => `https://archive.org/search?query=${enc(q)}`],
+  ['Wikisource', 'Public-domain texts', q => `https://en.wikisource.org/w/index.php?search=${enc(q)}`], ['National Archives', 'Documents of U.S. history', q => `https://www.archives.gov/search?query=${enc(q)}`],
+];
+async function alleySearch(q, tab) {
+  q = String(q || '').trim().slice(0, 120); if (!q) return { query: q, results: [], sites: [] };
+  if (BLOCK.test(q)) return { query: q, blocked: true, message: 'Alleyway only searches for school and research topics. Try a subject, a person, a place or a question for class.', results: [], sites: [] };
+  const out = [], tasks = [];
+  if (tab === 'all' || tab === 'articles') tasks.push((async () => { const j = await (await get(`https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&srlimit=6&origin=*&srsearch=${enc(q)}`)).json();
+    for (const r of (j.query && j.query.search) || []) out.push({ kind: 'article', title: r.title, snippet: strip(r.snippet).slice(0, 220), url: `https://en.wikipedia.org/wiki/${enc(r.title.replace(/ /g, '_'))}`, source: 'Wikipedia' }); })().catch(() => {}));
+  if (tab === 'all' || tab === 'books') {
+    tasks.push((async () => { const j = await (await get(`https://openlibrary.org/search.json?limit=5&q=${enc(q)}`)).json();
+      for (const d of j.docs || []) out.push({ kind: 'book', title: d.title, snippet: `${(d.author_name || ['Unknown']).slice(0, 2).join(', ')}${d.first_publish_year ? ' · first published ' + d.first_publish_year : ''}`, url: `https://openlibrary.org${d.key}`, source: 'Open Library' }); })().catch(() => {}));
+    tasks.push((async () => { const j = await (await get(`https://gutendex.com/books?search=${enc(q)}`)).json();
+      for (const d of (j.results || []).slice(0, 5)) out.push({ kind: 'book', title: d.title, snippet: `${(d.authors || []).map(a => a.name).slice(0, 2).join(', ') || 'Unknown'} · free public-domain ebook`, url: `https://www.gutenberg.org/ebooks/${d.id}`, source: 'Project Gutenberg', gutenberg: d.id }); })().catch(() => {}));
+  }
+  await Promise.all(tasks);
+  return { query: q, results: out.filter(r => hostOk(r.url)).slice(0, 18), sites: SITES.map(([name, why, f]) => ({ name, why, url: f(q) })).filter(x => hostOk(x.url)) };
+}
+async function bookText(id) {
+  id = String(id || '').replace(/\D/g, ''); if (!id) throw new Error('no id');
+  const url = `https://www.gutenberg.org/cache/epub/${id}/pg${id}.txt`; if (!hostOk(url)) throw new Error('blocked');
+  let t = await (await get(url, 15000)).text(); const ttl = (t.match(/^\s*Title:\s*(.+)$/m) || [])[1]; const a = t.search(/\*\*\* ?START OF/i), b = t.search(/\*\*\* ?END OF/i);
+  if (a >= 0) t = t.slice(t.indexOf('\n', a) + 1); if (b >= 0) t = t.slice(0, t.search(/\*\*\* ?END OF/i));
+  const title = ttl || `Book ${id}`; return { id, title: title.trim(), text: t.replace(/\r/g, '').trim().slice(0, 240000) };
 }
 
 

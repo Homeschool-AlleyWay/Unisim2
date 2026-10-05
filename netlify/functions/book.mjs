@@ -264,11 +264,8 @@ async function bookText(id) {
 
 
 export default async (req) => {
-  if (req.method !== 'POST') return new Response('POST only', { status: 405 });
-  try {
-    const text = await req.text(); if (text.length > 16000) return new Response('too big', { status: 413 });
-    const r = await chat(JSON.parse(text)); if (!r) return new Response('no model', { status: 501 });
-    return Response.json(r);
-  } catch (e) { return new Response('chat failed', { status: 502 }); }
+  const q = new URL(req.url).searchParams;
+  try { return Response.json(await bookText(q.get('id')), { headers: { 'cache-control': 'public, max-age=86400' } }); }
+  catch (e) { return Response.json({ error: 'book unavailable' }, { status: 502 }); }
 };
-export const config = { path: '/api/chat' };
+export const config = { path: '/api/book' };
