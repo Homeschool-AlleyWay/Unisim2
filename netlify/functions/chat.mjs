@@ -218,12 +218,12 @@ function mockResponse(url) {
 }
 
 
-export default async (req, context) => {
-  const u = new URL(req.url), q = u.searchParams, g = context && context.geo;     // Netlify supplies an approximate location when the page sends none
+export default async (req) => {
+  if (req.method !== 'POST') return new Response('POST only', { status: 405 });
   try {
-    const hasPlace = q.get('city') || (q.get('lat') && q.get('lon'));
-    const d = await build({ city: q.get('city'), lat: q.get('lat') || (!hasPlace && g && g.latitude) || null, lon: q.get('lon') || (!hasPlace && g && g.longitude) || null, tz: q.get('tz') || (g && g.timezone) || null, grade: q.get('grade') || '6', edition: q.get('edition'), limit: q.get('limit') });
-    return Response.json(d, { headers: { 'cache-control': 'public, max-age=300' } });
-  } catch (e) { return Response.json({ error: String(e.message) }, { status: 502 }); }
+    const text = await req.text(); if (text.length > 16000) return new Response('too big', { status: 413 });
+    const r = await chat(JSON.parse(text)); if (!r) return new Response('no model', { status: 501 });
+    return Response.json(r);
+  } catch (e) { return new Response('chat failed', { status: 502 }); }
 };
-export const config = { path: '/api/broadcast' };
+export const config = { path: '/api/chat' };

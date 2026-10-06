@@ -9,6 +9,12 @@
   PORT = "3000"
   BASE_PATH = "/"
 
+# Flip phone shortcut (a standalone installable web app inside the academy build).
+[[redirects]]
+  from = "/phone"
+  to = "/academy/phone.html"
+  status = 200
+
 # Single-page app: unknown paths (e.g. /classroom, /characters) fall back to the app. Real files such as /academy/index.html win first.
 [[redirects]]
   from = "/*"
@@ -19,3 +25,8 @@
   for = "/academy/assets/*"
   [headers.values]
     Cache-Control = "public, max-age=86400"
+
+[[headers]]
+  for = "/academy/phone-sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
