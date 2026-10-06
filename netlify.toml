@@ -13,7 +13,7 @@
 [[redirects]]
   from = "/phone"
   to = "/academy/phone.html"
-  status = 200
+  status = 302
 
 # Single-page app: unknown paths (e.g. /classroom, /characters) fall back to the app. Real files such as /academy/index.html win first.
 [[redirects]]
