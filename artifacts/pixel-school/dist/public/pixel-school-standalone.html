@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mobile School Game</title>
+    <style>
+        body { 
+            margin: 0; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            background: #222; 
+            font-family: sans-serif; 
+            /* Prevents screen zooming when tapping buttons */
+            touch-action: none; 
+        }
+        canvas { 
+            background: #f0f0f0; 
+            margin-top: 20px; 
+            border: 4px solid #555; 
+            border-radius: 4px;
+        }
+        .controls { 
+            display: grid; 
+            grid-template-columns: 60px 60px 60px; 
+            gap: 15px; 
+            margin-top: 30px; 
+        }
+        .btn { 
+            width: 60px; 
+            height: 60px; 
+            background: #444; 
+            border: 2px solid #888; 
+            border-radius: 12px; 
+            font-size: 28px; 
+            color: white; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            user-select: none; 
+        }
+        .btn:active { background: #777; }
+        .up { grid-column: 2; }
+        .left { grid-column: 1; }
+        .right { grid-column: 3; }
+        .down { grid-column: 2; }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="320" height="320"></canvas>
+    
+    <!-- Virtual Touch D-Pad -->
+    <div class="controls">
+        <div></div><div class="btn up" id="up">↑</div><div></div>
+        <div class="btn left" id="left">←</div><div class="btn down" id="down">↓</div><div class="btn right" id="right">→</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Player Setup
+        const player = { x: 150, y: 260, size: 20, speed: 3, dx: 0, dy: 0 };
+        
+        // Map Setup (Obstacles)
+        const walls = [
+            { x: 0, y: 0, w: 320, h: 10 },       // Top
+            { x: 0, y: 0, w: 10, h: 320 },       // Left
+            { x: 0, y: 310, w: 320, h: 10 },     // Bottom
+            { x: 310, y: 0, w: 10, h: 320 }      // Right
+        ];
+        const desks = [
+            { x: 50, y: 100, w: 40, h: 30 }, { x: 140, y: 100, w: 40, h: 30 }, { x: 230, y: 100, w: 40, h: 30 },
+            { x: 50, y: 180, w: 40, h: 30 }, { x: 140, y: 180, w: 40, h: 30 }, { x: 230, y: 180, w: 40, h: 30 }
+        ];
+        const teacherDesk = { x: 100, y: 30, w: 120, h: 25 };
+        const obstacles = [...walls, ...desks, teacherDesk];
+
+        // Collision Detection
+        function checkCollision(newX, newY) {
+            for (let obs of obstacles) {
+                if (newX < obs.x + obs.w && newX + player.size > obs.x &&
+                    newY < obs.y + obs.h && newY + player.size > obs.y) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Game Logic Update
+        function update() {
+            if (player.dx !== 0 && !checkCollision(player.x + player.dx, player.y)) {
+                player.x += player.dx;
+            }
+            if (player.dy !== 0 && !checkCollision(player.x, player.y + player.dy)) {
+                player.y += player.dy;
+            }
+        }
+
+        // Rendering Engine
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw Walls
+            ctx.fillStyle = '#646464';
+            walls.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
+            
+            // Draw Desks
+            ctx.fillStyle = '#8B4513';
+            desks.forEach(d => ctx.fillRect(d.x, d.y, d.w, d.h));
+            ctx.fillRect(teacherDesk.x, teacherDesk.y, teacherDesk.w, teacherDesk.h);
+            
+            // Draw Player
+            ctx.fillStyle = '#3296FF';
+            ctx.fillRect(player.x, player.y, player.size, player.size);
+        }
+
+        // Main Loop
+        function loop() { 
+            update(); 
+            draw(); 
+            requestAnimationFrame(loop); 
+        }
+        loop();
+
+        // Bind Mobile Touch Controls
+        function bindButton(id, dx, dy) {
+            const btn = document.getElementById(id);
+            // Touch events for mobile
+            btn.addEventListener('touchstart', (e) => { 
+                e.preventDefault(); 
+                player.dx = dx; 
+                player.dy = dy; 
+            });
+            btn.addEventListener('touchend', (e) => { 
+                e.preventDefault(); 
+                player.dx = 0; 
+                player.dy = 0; 
+            });
+            // Mouse events for testing on desktop
+            btn.addEventListener('mousedown', () => { player.dx = dx; player.dy = dy; });
+            btn.addEventListener('mouseup', () => { player.dx = 0; player.dy = 0; });
+        }
+
+        bindButton('up', 0, -player.speed);
+        bindButton('down', 0, player.speed);
+        bindButton('left', -player.speed, 0);
+        bindButton('right', player.speed, 0);
+    </script>
+</body>
+</html>
